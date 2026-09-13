@@ -78,6 +78,9 @@ Both Silo APIs are supported:
 - **Read/unread state** flows from Aidoku to Silo when opening a chapter.
   Aidoku's source API has no hook for page-level progress, so in-chapter
   position is not written back to Silo.
+- **Large chapters** are downloaded and extracted whole, so memory use scales
+  with the chapter's archive size. Typical manga chapters are fine; very large
+  single archives may exceed the reader's memory budget.
 
 ## Development
 
