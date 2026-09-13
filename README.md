@@ -73,8 +73,20 @@ Both Silo APIs are supported:
   and each page's byte range on demand. **`.cbr` (RAR) archives are not
   supported** and show a clear error — RAR entries would need a RAR decoder
   running inside Aidoku's WebAssembly sandbox, and no practical pure-Rust
-  option exists. Convert `.cbr` files to `.cbz`, or read them in the Silo web
-  app.
+  option exists. Convert `.cbr` files to `.cbz` (see below), or read them in
+  the Silo web app.
+- A ZIP mislabeled with a `.cbr` extension still works: the format is detected
+  from the file's magic bytes, not its extension.
+
+To convert a library to CBZ, run the included helper and then rescan the
+library in Silo:
+
+```sh
+scripts/convert-cbr-to-cbz.sh --apply --delete /path/to/manga-library
+```
+
+It needs one of `unar`, `unrar`, `7z`, or `7zz` plus `zip`; without `--apply`
+it only reports what it would do.
 - **Manga library type only.** Silo has no separate `comic` type, so both manga
   and comics come from `manga` libraries. EPUB/PDF `ebook` libraries are
   intentionally not exposed (Aidoku renders images, not ebooks).

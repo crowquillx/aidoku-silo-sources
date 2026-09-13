@@ -109,20 +109,29 @@ impl Source for Silo {
 			.clone()
 			.unwrap_or_default()
 			.to_ascii_lowercase();
-		match container.as_str() {
-			"" | "cbz" => {}
-			"cbr" | "rar" => bail!(
-				"CBR/RAR comic archives aren't supported. Convert this file to CBZ or read it in the Silo web reader."
-			),
-			other => bail!(
-				"This chapter is a .{other} file, which this source can't render. Use the Silo web reader for it."
-			),
-		}
 
 		let file_id = version.file_id.as_string();
 		let total = client
 			.chapter_size(&chapter.key, &file_id)?
 			.ok_or_else(|| error!("The Silo server did not report the archive size."))?;
+
+		// Decide by content, not extension: a ZIP mislabeled `.cbr` still works,
+		// while a real RAR is rejected with a clear message.
+		let head = client.chapter_range(&chapter.key, &file_id, 0, Some(7))?;
+		if is_rar_magic(&head.data) {
+			bail!(
+				"CBR/RAR comic archives aren't supported. Convert this file to CBZ or read it in the Silo web reader."
+			);
+		}
+		if !is_zip_magic(&head.data) {
+			bail!(
+				"This chapter is a .{container} file, which this source can't render. Use the Silo web reader for it."
+			);
+		}
+		if !matches!(container.as_str(), "" | "cbz" | "cbr" | "rar") {
+			bail!("This chapter is a .{container} file, not a CBZ comic archive.");
+		}
+
 		let entries = load_entries(&mut client, &chapter.key, &file_id, total)?;
 		let page_entries = zip::image_pages(entries);
 		if page_entries.is_empty() {
@@ -441,6 +450,16 @@ fn decode_page(code: u16, data: &[u8], context: &PageContext) -> Result<Vec<u8>>
 
 fn context_u64(context: &PageContext, key: &str) -> Option<u64> {
 	context.get(key).and_then(|value| value.parse::<u64>().ok())
+}
+
+fn is_zip_magic(data: &[u8]) -> bool {
+	data.starts_with(&[0x50, 0x4b, 0x03, 0x04])
+		|| data.starts_with(&[0x50, 0x4b, 0x05, 0x06])
+		|| data.starts_with(&[0x50, 0x4b, 0x07, 0x08])
+}
+
+fn is_rar_magic(data: &[u8]) -> bool {
+	data.starts_with(b"Rar!\x1a\x07\x00") || data.starts_with(b"Rar!\x1a\x07\x01\x00")
 }
 
 struct SearchParams {
@@ -884,6 +903,17 @@ mod test {
 		assert_eq!(zip::natural_cmp("page2.png", "page10.png"), Ordering::Less);
 		assert_eq!(zip::natural_cmp("002-003.webp", "004.webp"), Ordering::Less);
 		assert_eq!(zip::natural_cmp("a/9.png", "a/10.png"), Ordering::Less);
+	}
+
+	#[aidoku_test]
+	fn test_magic_detection() {
+		assert!(is_zip_magic(&[0x50, 0x4b, 0x03, 0x04, 0, 0]));
+		assert!(is_zip_magic(&[0x50, 0x4b, 0x05, 0x06]));
+		assert!(is_rar_magic(b"Rar!\x1a\x07\x00xxxx"));
+		assert!(is_rar_magic(b"Rar!\x1a\x07\x01\x00xxx"));
+		assert!(!is_zip_magic(b"Rar!\x1a\x07\x00"));
+		assert!(!is_rar_magic(&[0x50, 0x4b, 0x03, 0x04]));
+		assert!(!is_zip_magic(b"%PDF-1.7"));
 	}
 
 	// ---- Live server tests against the Silo test instance ----

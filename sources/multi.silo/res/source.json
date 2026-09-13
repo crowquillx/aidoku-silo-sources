@@ -3,7 +3,7 @@
 		"id": "multi.silo",
 		"name": "Silo",
 		"altNames": ["Silo Server"],
-		"version": 2,
+		"version": 3,
 		"url": "https://siloserver.org",
 		"contentRating": 1,
 		"languages": ["multi"],
