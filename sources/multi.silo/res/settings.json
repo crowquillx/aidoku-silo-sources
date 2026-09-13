@@ -1,0 +1,111 @@
+[
+	{
+		"type": "group",
+		"title": "Server",
+		"items": [
+			{
+				"type": "text",
+				"key": "baseUrl",
+				"title": "Server URL",
+				"placeholder": "https://silo.example.com",
+				"keyboardType": 3,
+				"returnKeyType": 9,
+				"autocorrectionDisabled": true,
+				"autocapitalizationType": 0,
+				"refreshes": ["content", "listings"]
+			},
+			{
+				"type": "select",
+				"key": "apiVersion",
+				"title": "API Version",
+				"values": ["auto", "v2", "v1"],
+				"titles": ["Auto-detect (recommended)", "v2 (current)", "v1 (deprecated)"],
+				"default": "auto",
+				"refreshes": ["content", "listings"]
+			},
+			{
+				"type": "select",
+				"key": "imageSize",
+				"title": "Image Quality",
+				"values": ["small", "medium", "large", "original"],
+				"titles": ["Small", "Medium", "Large", "Original"],
+				"default": "large",
+				"refreshes": ["content"]
+			}
+		],
+		"footer": "Silo v1 is deprecated and will stop working once the server drops the /api/v1 API. Use Auto or v2 when your server supports it."
+	},
+	{
+		"type": "group",
+		"title": "Authentication",
+		"items": [
+			{
+				"type": "select",
+				"key": "authMode",
+				"title": "Auth Mode",
+				"values": ["credentials", "apiKey"],
+				"titles": ["Username & Password", "API Key"],
+				"default": "credentials",
+				"refreshes": ["content", "listings"]
+			},
+			{
+				"type": "login",
+				"method": "basic",
+				"key": "credentials",
+				"title": "LOGIN",
+				"requires": "baseUrl",
+				"refreshes": ["content", "listings"]
+			},
+			{
+				"type": "text",
+				"key": "apiKey",
+				"title": "API Key",
+				"placeholder": "sa_...",
+				"secure": true,
+				"keyboardType": 3,
+				"returnKeyType": 9,
+				"autocorrectionDisabled": true,
+				"refreshes": ["content", "listings"]
+			}
+		],
+		"footer": "Sign in with your Silo username and password, or paste an unscoped API key (sa_...) for long-lived access. API keys skip profile PIN prompts."
+	},
+	{
+		"type": "group",
+		"title": "Profile",
+		"items": [
+			{
+				"type": "text",
+				"key": "profile",
+				"title": "Profile",
+				"placeholder": "Profile name or ID (defaults to primary)",
+				"autocorrectionDisabled": true,
+				"refreshes": ["content", "listings"]
+			},
+			{
+				"type": "text",
+				"key": "pin",
+				"title": "Profile PIN",
+				"placeholder": "PIN (only if the profile is locked)",
+				"secure": true,
+				"keyboardType": 4,
+				"returnKeyType": 9,
+				"refreshes": ["content", "listings"]
+			}
+		],
+		"footer": "Silo requires a profile for reading and progress sync. Leave the profile blank to use the account's primary profile."
+	},
+	{
+		"type": "group",
+		"title": "Reading",
+		"items": [
+			{
+				"type": "switch",
+				"key": "markReadOnOpen",
+				"title": "Mark chapters read on Silo",
+				"subtitle": "Marks a chapter as read on Silo when you open it in Aidoku.",
+				"default": true
+			}
+		]
+	}
+]
