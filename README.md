@@ -61,25 +61,33 @@ Both Silo APIs are supported:
 - Series details: cover, backdrop (as an alternate cover), overview, authors,
   genres, and publication status.
 - Chapter list with volume/chapter numbers derived from the server.
-- Lazy page loading: only the ZIP central directory and the current page's byte
-  range are fetched over HTTP, so opening a chapter doesn't download the whole
-  archive and memory stays bounded per page.
+- Lazy page loading for CBZ: only the ZIP central directory and the current
+  page's byte range are fetched over HTTP.
 - Progress sync: opening a chapter marks it read on Silo (toggleable).
 
 ## Known limitations
 
-- **CBZ only.** Silo exposes no per-page image endpoint; it serves a whole
-  chapter archive. The source works around this by reading the ZIP directory
-  and each page's byte range on demand. **`.cbr` (RAR) archives are not
-  supported** and show a clear error — RAR entries would need a RAR decoder
-  running inside Aidoku's WebAssembly sandbox, and no practical pure-Rust
-  option exists. Convert `.cbr` files to `.cbz` (see below), or read them in
-  the Silo web app.
+- **CBZ and CBR.** Silo exposes no per-page image endpoint and serves a whole
+  chapter archive. For CBZ, the source reads the ZIP directory and fetches
+  each page's byte range. Source version 4 enables the native `no_std` CBR
+  decoder by default through `cbr-native`. It reads tested RAR4 and RAR5
+  normal and solid archives. For CBR, Aidoku downloads the full archive for
+  every page.
+- The native CBR decoder limits the archive to 16 MiB, each unpacked page to
+  16 MiB, total unpacked members to 64 MiB, entries to 512, and RAR5
+  dictionaries to 8 MiB. A known RAR3 PPMd gap remains: if an LZ stream
+  switches to PPMd midstream, compcol 0.6.11 can request up to 256 MiB. The
+  stated limits do not cover that allocation. No Aidoku device validation has
+  been completed, so this CBR support is not fully hardened. `cbr-wasm`
+  remains an opt-in comparison backend.
+- If a device or archive is incompatible, convert CBR to CBZ as a fallback.
+  See the [measured CBR report](docs/research/cbr-feasibility.md) and
+  [native CBR build instructions](experiments/cbr-native/README.md).
 - A ZIP mislabeled with a `.cbr` extension still works: the format is detected
   from the file's magic bytes, not its extension.
 
-To convert a library to CBZ, run the included helper and then rescan the
-library in Silo:
+To convert a CBR library to CBZ as a fallback, run the included helper and then
+rescan the library in Silo:
 
 ```sh
 scripts/convert-cbr-to-cbz.sh --apply --delete /path/to/manga-library
@@ -104,7 +112,8 @@ cargo install --git https://github.com/Aidoku/aidoku-rs aidoku-cli
 cargo install --git https://github.com/Aidoku/aidoku-rs aidoku-test-runner
 
 cd sources/multi.silo
-cargo test          # unit tests + live tests against a Silo server
+cargo test          # unit tests + live tests, native CBR is the v4 default
+cargo test --no-default-features  # no-CBR comparison
 aidoku package      # produces package.aix
 aidoku verify package.aix
 aidoku build package.aix --name "Silo Sources"   # local source list in public/

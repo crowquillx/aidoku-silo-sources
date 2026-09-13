@@ -1,0 +1,5 @@
+{
+  "path": "target/wasm32-unknown-unknown/release/silo_cbr_native_runner.wasm",
+  "bytes": 299195,
+  "sha256": "fa56453211ccf3ccfd0890aa555597881f58c9927add1d942619b073cfad1edb"
+}

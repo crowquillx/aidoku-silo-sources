@@ -1,0 +1,7 @@
+[package]
+name="compcol-fixture"
+version="0.1.0"
+edition="2024"
+[dependencies]
+rars={version="=0.9.4",default-features=false}
+compcol={version="=0.6.11",default-features=false,features=["rar3","rar5"]}

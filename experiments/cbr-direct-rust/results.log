@@ -1,0 +1,61 @@
+Direct Rust RAR probe results (commands run with CARGO_TARGET_DIR=/tmp/cbr-direct-rust-target)
+Captured 2026-09-13; these are bounded direct-crate probes, not the parent cbr-wasm build.
+
+$ cargo test --no-default-features --features rars --lib
+test rars_tests::reads_an_indexed_member_from_an_in_memory_rar ... ok
+test result: ok. 1 passed; 0 failed
+
+$ cargo build --target wasm32-unknown-unknown --no-default-features --features rars --lib
+Finished `dev` profile [unoptimized + debuginfo]
+Verdict: std-on-wasm build passed. The feature set still resolves getrandom 0.4.3 with
+wasm_js and wasm-bindgen; rars 0.9.4 has no feature section that makes the crate no_std.
+
+$ RUSTFLAGS='--cfg getrandom_backend="unsupported"' cargo build --target wasm32-unknown-unknown \
+    --no-default-features --features rars --lib
+error[E0599]: no associated function or constant named `WEB_CRYPTO` found for struct
+`error::Error` in getrandom-0.4.3/src/error.rs:185
+Verdict: disabling the wasm randomness backend does not turn this dependency graph into
+no_std and breaks getrandom's wasm_js configuration.
+
+$ cargo check --no-default-features --features rars-format --lib
+Finished `dev` profile
+$ cargo check --target wasm32-unknown-unknown --no-default-features --features rars-format --lib
+The wasm32/64-unknown-unknown are not supported by default; you may need to enable the
+"wasm_js" crate feature ...
+Verdict: host check passed; wasm check failed in getrandom 0.4.3. rars-format 0.3.2
+also uses std::fs/std::io and is not a no_std container core.
+
+$ cargo check --no-default-features --features unrar-rs --lib
+unrar-rs needs a crypto backend: enable feature crypto-aws-lc (native, default),
+crypto-host (wasm...), or crypto-rust
+Verdict: the host no-default probe fails before it can provide a usable configuration.
+
+$ cargo check --target wasm32-unknown-unknown --no-default-features --features unrar-rs --lib
+unrar-rs needs a crypto backend: enable feature crypto-aws-lc (native, default),
+crypto-host (wasm...), or crypto-rust
+error[E0412]: cannot find type `tm` in crate `libc`
+error[E0425]: cannot find function `mktime` in crate `libc`
+Verdict: wasm no-default probe failed; the dependency graph retains std/libc paths.
+
+$ cargo check --no-default-features --features unrar --lib
+Finished `dev` profile
+$ cargo check --target wasm32-unknown-unknown --no-default-features --features unrar --lib
+Compiler family detection failed ... failed to find tool "clang++"
+cc-rs: failed to find tool "clang++"
+Verdict: host check passed, but unrar 0.5.8 is a bundled C/C++ wrapper rather than a
+pure Rust/no_std core.
+
+$ cargo check --target wasm32-unknown-unknown --no-default-features \
+    --features compcol-rar3,compcol-rar5 --lib
+Finished `dev` profile
+Verdict: compcol 0.6.11 true no_std wasm check passed. It is a raw RAR3/RAR5 member
+stream decoder: the caller still has to parse the RAR container, headers, flags,
+checksums, encryption and volumes and provide compressed blocks plus unpack size.
+
+$ cargo test --manifest-path /home/tan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/compcol-0.6.11/Cargo.toml \
+    --no-default-features --features rar3 --test rar3
+31 passed; 0 failed
+$ cargo test --manifest-path /home/tan/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/compcol-0.6.11/Cargo.toml \
+    --no-default-features --features rar5 --test rar5
+20 passed; 0 failed
+Additional compcol library tests: 53 passed; 0 failed.

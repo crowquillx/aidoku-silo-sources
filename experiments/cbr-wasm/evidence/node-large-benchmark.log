@@ -1,0 +1,17 @@
+RAR input=3542121 index=2 guest_memory=8323072 fuel=35680333
+{"name":"rar40-normal.cbr","fuel":"500000000","result":1180659,"ms":276.76509899999996,"outer_memory":21430272}
+RAR input=3542121 index=2 guest_memory=8323072 fuel=35680333
+{"name":"rar40-normal.cbr","fuel":"12000000000","result":1180659,"ms":221.35034599999994,"outer_memory":21430272}
+RAR input=3542121 index=2 guest_memory=8323072 fuel=35680333
+{"name":"rar40-solid.cbr","fuel":"500000000","result":1180659,"ms":219.34981599999992,"outer_memory":21430272}
+RAR input=3542121 index=2 guest_memory=8323072 fuel=35680333
+{"name":"rar40-solid.cbr","fuel":"12000000000","result":1180659,"ms":218.27824199999998,"outer_memory":21430272}
+RAR input=3542218 index=2 guest_memory=8323072 fuel=386766132
+{"name":"rar50-normal.cbr","fuel":"500000000","result":1180659,"ms":1755.665062,"outer_memory":21430272}
+RAR input=3542218 index=2 guest_memory=8323072 fuel=386766132
+{"name":"rar50-normal.cbr","fuel":"12000000000","result":1180659,"ms":1739.2215049999995,"outer_memory":21430272}
+RAR input=3541868 index=2 guest_memory=8323072 fuel=499999619
+guest failure: all fuel consumed by WebAssembly
+{"name":"rar50-solid.cbr","fuel":"500000000","result":-1,"ms":1141.278104,"outer_memory":21430272}
+RAR input=3541868 index=2 guest_memory=22020096 fuel=9287228919
+{"name":"rar50-solid.cbr","fuel":"12000000000","result":1180659,"ms":21596.157422,"outer_memory":78184448}

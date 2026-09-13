@@ -1,0 +1,9 @@
+   Compiling silo v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/sources/multi.silo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.87s
+     Running unittests src/lib.rs (target/wasm32-unknown-unknown/debug/deps/silo-549c60646bae7c80.wasm)
+
+running 2 tests
+test silo::test::test_v2_against_mock                         ... ok
+test silo::test::test_v2_rar_api_key_image_request_and_decode ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 15.22s

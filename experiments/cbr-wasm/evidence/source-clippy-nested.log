@@ -1,0 +1,9 @@
+   Compiling wasmparser v0.228.0
+   Compiling wasmi_ir v2.0.0
+    Checking wasmi_core v2.0.0
+    Checking bitflags v2.13.2
+   Compiling wasmi v2.0.0
+    Checking wasmi_collections v2.0.0
+    Checking spin v0.9.9
+    Checking silo v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/sources/multi.silo)
+    Finished `release` profile [optimized] target(s) in 6.74s

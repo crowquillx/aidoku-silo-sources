@@ -1,0 +1,14 @@
+   Compiling silo v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/sources/multi.silo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.47s
+     Running unittests src/lib.rs (target/wasm32-unknown-unknown/debug/deps/silo-395581bd35478f95.wasm)
+
+running 7 tests
+test silo::test::test_v2_against_mock                 ... ignored
+test silo::test::test_zip_natural_order_and_filtering ... ok
+test silo::test::test_zip_deflate_entry               ... ok
+test silo::test::test_magic_detection                 ... ok
+test silo::test::test_natural_cmp                     ... ok
+test silo::test::test_live_listings_and_browse        ... ok
+test silo::test::test_live_page_list                  ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.96s

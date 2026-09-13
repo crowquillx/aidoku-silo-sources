@@ -3,6 +3,11 @@ extern crate alloc;
 
 mod client;
 mod models;
+#[cfg(all(feature = "cbr-wasm", not(feature = "cbr-native")))]
+mod rar;
+#[cfg(feature = "cbr-native")]
+#[path = "rar_native.rs"]
+mod rar;
 mod settings;
 mod zip;
 
@@ -26,6 +31,12 @@ const OFF_KEY: &str = "silo_off";
 const LEN_KEY: &str = "silo_len";
 const METHOD_KEY: &str = "silo_method";
 const SIZE_KEY: &str = "silo_usize";
+#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+const RAR_INDEX_KEY: &str = "silo_rar_index";
+#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+const RAR_TOTAL_KEY: &str = "silo_rar_total";
+#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+const RAR_SIZE_KEY: &str = "silo_rar_size";
 
 /// Sort options presented to the user, each mapping to a Silo sort field and
 /// order. `can_ascend` is false so the direction is explicit per option.
@@ -116,12 +127,55 @@ impl Source for Silo {
 			.ok_or_else(|| error!("The Silo server did not report the archive size."))?;
 
 		// Decide by content, not extension: a ZIP mislabeled `.cbr` still works,
-		// while a real RAR is rejected with a clear message.
+		// while a real RAR takes the opt-in decoder path below.
 		let head = client.chapter_range(&chapter.key, &file_id, 0, Some(7))?;
 		if is_rar_magic(&head.data) {
-			bail!(
-				"CBR/RAR comic archives aren't supported. Convert this file to CBZ or read it in the Silo web reader."
-			);
+			#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+			{
+				if total == 0 || total > rar::MAX_ARCHIVE_BYTES {
+					bail!("RAR archive is empty or exceeds the 16 MiB limit.");
+				}
+				let archive = client.chapter_range(&chapter.key, &file_id, 0, Some(total - 1))?;
+				if archive.status != 200 && archive.status != 206 {
+					bail!("RAR archive request returned HTTP {}.", archive.status);
+				}
+				if archive.data.len() as u64 != total {
+					bail!("RAR archive response was truncated.");
+				}
+				let page_entries = rar::list_pages(&archive.data)?;
+
+				if settings::mark_read_on_open() {
+					let _ = client.mark_read(&chapter.key);
+				}
+				let archive_url = format!(
+					"{}{}/ebooks/{}/files/{}/read",
+					client.base,
+					client.prefix,
+					encode_uri_component(&chapter.key),
+					encode_uri_component(&file_id)
+				);
+				let mut pages = Vec::with_capacity(page_entries.len());
+				for (index, entry) in page_entries.iter().enumerate() {
+					let mut context = PageContext::new();
+					context.insert(String::from(RAR_INDEX_KEY), format!("{}", entry.index));
+					context.insert(String::from(RAR_TOTAL_KEY), format!("{total}"));
+					context.insert(String::from(RAR_SIZE_KEY), format!("{}", entry.size));
+					pages.push(Page {
+						content: PageContent::url_context(
+							format!("{archive_url}?aidoku_page={index}"),
+							context,
+						),
+						..Default::default()
+					});
+				}
+				return Ok(pages);
+			}
+			#[cfg(not(any(feature = "cbr-native", feature = "cbr-wasm")))]
+			{
+				bail!(
+					"CBR/RAR comic archives aren't supported. Convert this file to CBZ or read it in the Silo web reader."
+				);
+			}
 		}
 		if !is_zip_magic(&head.data) {
 			bail!(
@@ -363,6 +417,19 @@ impl ImageRequestProvider for Silo {
 		let Some(context) = context else {
 			return Request::get(url).map_err(invalid);
 		};
+		#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+		if context.get(RAR_INDEX_KEY).is_some() {
+			let total = context_u64(&context, RAR_TOTAL_KEY)
+				.ok_or_else(|| error!("Missing RAR archive length."))?;
+			if total == 0 || total > rar::MAX_ARCHIVE_BYTES {
+				bail!("RAR archive is empty or exceeds the 16 MiB limit.");
+			}
+			let end = total - 1;
+			let mut request = Request::get(url).map_err(invalid)?;
+			let range = format!("bytes=0-{end}");
+			request = request.header("Range", range.as_str());
+			return Ok(add_stored_auth(request));
+		}
 		let Some(offset) = context_u64(&context, OFF_KEY) else {
 			return Request::get(url).map_err(invalid);
 		};
@@ -378,18 +445,7 @@ impl ImageRequestProvider for Silo {
 		let mut request = Request::get(url).map_err(invalid)?;
 		let range = format!("bytes={offset}-{end}");
 		request = request.header("Range", range.as_str());
-		let auth = client::stored_auth();
-		if let Some(token) = &auth.token {
-			let value = format!("Bearer {token}");
-			request = request.header("Authorization", value.as_str());
-		}
-		if !auth.profile_id.is_empty() {
-			request = request.header("X-Profile-Id", auth.profile_id.as_str());
-		}
-		if let Some(profile_token) = &auth.profile_token {
-			request = request.header("X-Profile-Token", profile_token.as_str());
-		}
-		Ok(request)
+		Ok(add_stored_auth(request))
 	}
 }
 
@@ -437,6 +493,20 @@ fn load_entries(
 /// Turns a fetched page response into the page's image bytes. A `200` means the
 /// server ignored the range and returned the whole archive.
 fn decode_page(code: u16, data: &[u8], context: &PageContext) -> Result<Vec<u8>> {
+	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+	if context.get(RAR_INDEX_KEY).is_some() {
+		let index =
+			context_u64(context, RAR_INDEX_KEY).ok_or_else(|| error!("Missing RAR page index."))?;
+		let total = context_u64(context, RAR_TOTAL_KEY)
+			.ok_or_else(|| error!("Missing RAR archive length."))?;
+		let size =
+			context_u64(context, RAR_SIZE_KEY).ok_or_else(|| error!("Missing RAR page size."))?;
+		return rar::decode_page(code, data, index, total, size);
+	}
+	#[cfg(not(any(feature = "cbr-native", feature = "cbr-wasm")))]
+	if context.get("silo_rar_index").is_some() {
+		bail!("RAR decoding is unavailable without a CBR feature enabled.");
+	}
 	let offset = context_u64(context, OFF_KEY).ok_or_else(|| error!("Missing page metadata."))?;
 	let length = context_u64(context, LEN_KEY).ok_or_else(|| error!("Missing page metadata."))?;
 	let method = context_u64(context, METHOD_KEY).unwrap_or(0) as u16;
@@ -446,6 +516,26 @@ fn decode_page(code: u16, data: &[u8], context: &PageContext) -> Result<Vec<u8>>
 	} else {
 		zip::extract_local(data, method, length, size)
 	}
+}
+
+fn add_stored_auth(mut request: Request) -> Request {
+	let auth = client::stored_auth();
+	let token = if settings::auth_mode() == "apiKey" {
+		settings::api_key()
+	} else {
+		auth.token.unwrap_or_default()
+	};
+	if !token.is_empty() {
+		let value = format!("Bearer {token}");
+		request = request.header("Authorization", value.as_str());
+	}
+	if !auth.profile_id.is_empty() {
+		request = request.header("X-Profile-Id", auth.profile_id.as_str());
+	}
+	if let Some(profile_token) = &auth.profile_token {
+		request = request.header("X-Profile-Token", profile_token.as_str());
+	}
+	request
 }
 
 fn context_u64(context: &PageContext, key: &str) -> Option<u64> {
@@ -916,6 +1006,115 @@ mod test {
 		assert!(!is_zip_magic(b"%PDF-1.7"));
 	}
 
+	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+	fn rar_fixture(which: usize) -> &'static [u8] {
+		let fixtures: [&[u8]; 4] = [
+			include_bytes!(concat!(
+				env!("CARGO_MANIFEST_DIR"),
+				"/../../experiments/cbr-wasm/fixtures/rar40-normal.cbr"
+			))
+			.as_slice(),
+			include_bytes!(concat!(
+				env!("CARGO_MANIFEST_DIR"),
+				"/../../experiments/cbr-wasm/fixtures/rar40-solid.cbr"
+			))
+			.as_slice(),
+			include_bytes!(concat!(
+				env!("CARGO_MANIFEST_DIR"),
+				"/../../experiments/cbr-wasm/fixtures/rar50-normal.cbr"
+			))
+			.as_slice(),
+			include_bytes!(concat!(
+				env!("CARGO_MANIFEST_DIR"),
+				"/../../experiments/cbr-wasm/fixtures/rar50-solid.cbr"
+			))
+			.as_slice(),
+		];
+		fixtures[which]
+	}
+
+	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+	#[aidoku_test]
+	fn test_rar_fixtures_and_resource_guards() {
+		let expected = include_bytes!(concat!(
+			env!("CARGO_MANIFEST_DIR"),
+			"/../../experiments/cbr-wasm/fixtures/page1.png"
+		));
+		for which in 0..4 {
+			let archive = rar_fixture(which);
+			let pages = rar::list_pages(archive).unwrap();
+			assert_eq!(
+				pages
+					.iter()
+					.map(|page| page.name.as_str())
+					.collect::<Vec<_>>(),
+				["page1.png", "page2.png", "page10.png",]
+			);
+			assert_eq!(
+				pages.iter().map(|page| page.index).collect::<Vec<_>>(),
+				[2, 1, 0]
+			);
+			for code in [200, 206] {
+				let decoded = rar::decode_page(
+					code,
+					archive,
+					pages[0].index as u64,
+					archive.len() as u64,
+					pages[0].size,
+				)
+				.unwrap();
+				assert_eq!(decoded.as_slice(), expected.as_slice());
+			}
+		}
+
+		let archive = rar_fixture(0);
+		assert!(rar::list_pages(&archive[..archive.len() / 2]).is_err());
+		assert!(rar::extract_member(archive, 99).is_err());
+		assert!(rar::decode_page(500, archive, 2, archive.len() as u64, 49_348).is_err());
+		assert!(
+			rar::decode_page(
+				206,
+				&archive[..archive.len() - 1],
+				2,
+				archive.len() as u64,
+				49_348
+			)
+			.is_err()
+		);
+		let oversized = vec![0; rar::MAX_ARCHIVE_BYTES as usize + 1];
+		assert!(rar::list_pages(&oversized).is_err());
+	}
+
+	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+	#[aidoku_test]
+	fn test_rar_page_image_processor_rejects_malformed_response() {
+		let archive = rar_fixture(2);
+		let expected = include_bytes!(concat!(
+			env!("CARGO_MANIFEST_DIR"),
+			"/../../experiments/cbr-wasm/fixtures/page1.png"
+		));
+		let mut context = PageContext::new();
+		context.insert(String::from(RAR_INDEX_KEY), String::from("0"));
+		context.insert(String::from(RAR_TOTAL_KEY), format!("{}", archive.len()));
+		context.insert(String::from(RAR_SIZE_KEY), format!("{}", expected.len()));
+
+		for code in [200, 206] {
+			let result = Silo::new().process_page_image(
+				ImageResponse {
+					code,
+					headers: Default::default(),
+					request: aidoku::ImageRequest {
+						url: None,
+						headers: Default::default(),
+					},
+					image: ImageRef::new(expected),
+				},
+				Some(context.clone()),
+			);
+			assert!(result.is_err());
+		}
+	}
+
 	// ---- Live server tests against the Silo test instance ----
 
 	#[aidoku_test]
@@ -998,6 +1197,17 @@ mod test {
 		defaults_set("markReadOnOpen", DefaultValue::Bool(false));
 	}
 
+	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+	fn configure_v2_api_key_mock() {
+		configure_v2_mock();
+		defaults_set("authMode", DefaultValue::String(String::from("apiKey")));
+		defaults_set("apiKey", DefaultValue::String(String::from("mock-api-key")));
+		defaults_set(
+			"accessToken",
+			DefaultValue::String(String::from("stale-access-token")),
+		);
+	}
+
 	/// Exercises the v2 code paths (envelopes, string file ids, `seek`
 	/// pagination) against `tests/mock_silo_v2.py`. Run with:
 	/// `python3 tests/mock_silo_v2.py & cargo test -- --ignored`
@@ -1033,5 +1243,59 @@ mod test {
 		assert_eq!(pages.len(), 2);
 		assert!(matches!(&pages[0].content, PageContent::Url(_, Some(_))));
 		assert!(!decode_first_page("c1").is_empty());
+	}
+
+	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+	#[aidoku_test]
+	#[ignore]
+	fn test_v2_rar_api_key_image_request_and_decode() {
+		configure_v2_api_key_mock();
+		let source = Silo::new();
+		let pages = source
+			.get_page_list(
+				Manga::default(),
+				Chapter {
+					key: String::from("cbr1"),
+					..Default::default()
+				},
+			)
+			.unwrap();
+		assert_eq!(pages.len(), 3);
+		let contexts: Vec<PageContext> = pages
+			.iter()
+			.map(|page| match &page.content {
+				PageContent::Url(_, Some(context)) => context.clone(),
+				_ => panic!("expected a RAR URL page with context"),
+			})
+			.collect();
+		assert_eq!(
+			contexts
+				.iter()
+				.map(|context| context_u64(context, RAR_INDEX_KEY).unwrap())
+				.collect::<Vec<_>>(),
+			[2, 1, 0]
+		);
+
+		let (url, context) = match &pages[0].content {
+			PageContent::Url(url, Some(context)) => (url.clone(), context.clone()),
+			_ => panic!("expected a RAR URL page with context"),
+		};
+		for (url, expected_status) in [(url.clone(), 206), (format!("{url}&full=1"), 200)] {
+			let response = source
+				.get_image_request(url, Some(context.clone()))
+				.unwrap()
+				.send()
+				.unwrap();
+			assert_eq!(response.status_code(), expected_status);
+			let data = response.get_data().unwrap();
+			let decoded = decode_page(response.status_code() as u16, &data, &context).unwrap();
+			assert_eq!(
+				decoded.as_slice(),
+				include_bytes!(concat!(
+					env!("CARGO_MANIFEST_DIR"),
+					"/../../experiments/cbr-wasm/fixtures/page1.png"
+				))
+			);
+		}
 	}
 }

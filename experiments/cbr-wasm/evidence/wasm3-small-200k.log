@@ -1,0 +1,17 @@
+wasm_bytes=1835641 load_ms=1.099 initial_memory=1769472 stack=204800
+RAR input=5999 index=-1 guest_memory=1179648 fuel=1438349
+fixture=0 index=-1 bytes=284 ms=254.304 outer_memory=5832704
+RAR input=5999 index=2 guest_memory=1441792 fuel=33542287
+fixture=0 index=2 bytes=49348 ms=686.045 outer_memory=5832704
+RAR input=4040 index=-1 guest_memory=1179648 fuel=1436293
+fixture=1 index=-1 bytes=284 ms=145.138 outer_memory=5832704
+RAR input=4040 index=2 guest_memory=1638400 fuel=28491894
+fixture=1 index=2 bytes=49348 ms=605.285 outer_memory=5832704
+RAR input=4815 index=-1 guest_memory=1179648 fuel=1501652
+fixture=2 index=-1 bytes=284 ms=144.841 outer_memory=5832704
+RAR input=4815 index=2 guest_memory=1441792 fuel=32216309
+fixture=2 index=2 bytes=49348 ms=673.720 outer_memory=5832704
+RAR input=127742 index=-1 guest_memory=1441792 fuel=1508709
+fixture=3 index=-1 bytes=284 ms=149.202 outer_memory=5832704
+RAR input=127742 index=2 guest_memory=1769472 fuel=343741980
+fixture=3 index=2 bytes=49348 ms=4363.420 outer_memory=5832704

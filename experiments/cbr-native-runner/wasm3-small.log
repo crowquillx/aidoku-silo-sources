@@ -1,0 +1,9 @@
+wasm_bytes=297540 load_ms=0.562 initial_memory=1310720 stack=204800
+fixture=0 index=-1 bytes=1 ms=0.501 outer_memory=1376256
+fixture=0 index=2 bytes=49348 ms=4.957 outer_memory=5701632
+fixture=1 index=-1 bytes=1 ms=0.022 outer_memory=5701632
+fixture=1 index=2 bytes=49348 ms=6.211 outer_memory=5767168
+fixture=2 index=-1 bytes=1 ms=0.098 outer_memory=5767168
+fixture=2 index=2 bytes=49348 ms=8.170 outer_memory=5767168
+fixture=3 index=-1 bytes=1 ms=0.049 outer_memory=5767168
+fixture=3 index=2 bytes=49348 ms=40.863 outer_memory=5767168

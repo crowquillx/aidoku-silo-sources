@@ -1,0 +1,24 @@
+   Compiling silo-cbr-wasm-probe v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-wasm)
+    Finished `release` profile [optimized] target(s) in 11.53s
+     Running unittests src/lib.rs (target/wasm32-unknown-unknown/release/deps/silo_cbr_wasm_probe-a25236ab75d624a6.wasm)
+
+running 3 tests
+test silo_cbr_wasm_probe::tests::wasm_in_wasm         ... ok
+rars-0.9.4 bytes=1053743 imports=20
+memory MemoryType { core: MemoryType { inner: MemoryTypeInner { minimum: 18, maximum: None, page_size_log2: 16, index_type: I32 } } }
+without JS glue: cannot find definition for import (./rars_wasm_bg.js,__wbindgen_object_drop_ref) with type Func(FuncType { core: FuncType { params: [I32], results: [] } })
+node-unrar-js-2.0.2 bytes=207593 imports=64
+memory MemoryType { core: MemoryType { inner: MemoryTypeInner { minimum: 256, maximum: Some(32768), page_size_log2: 16, index_type: I32 } } }
+without JS glue: cannot find definition for import (a,a) with type Func(FuncType { core: FuncType { params: [], results: [I32] } })
+test silo_cbr_wasm_probe::tests::npm_modules_validate ... ok
+RAR input=5999 index=-1 guest_memory=1179648 fuel=1438349
+RAR input=5999 index=2 guest_memory=1441792 fuel=33542287
+RAR input=4040 index=-1 guest_memory=1179648 fuel=1436293
+RAR input=4040 index=2 guest_memory=1638400 fuel=28491894
+RAR input=4815 index=-1 guest_memory=1179648 fuel=1501652
+RAR input=4815 index=2 guest_memory=1441792 fuel=32216309
+RAR input=127742 index=-1 guest_memory=1441792 fuel=1508709
+RAR input=127742 index=2 guest_memory=1769472 fuel=343741980
+test silo_cbr_wasm_probe::tests::real_rar4_and_rar5   ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.04s

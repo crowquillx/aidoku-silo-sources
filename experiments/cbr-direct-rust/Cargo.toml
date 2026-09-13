@@ -1,0 +1,30 @@
+[package]
+name = "cbr-direct-rust"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+rars = ["dep:rars"]
+rars-format = ["dep:rars-format"]
+unrar-rs = ["dep:unrar-rs"]
+unrar = ["dep:unrar"]
+compcol-rar3 = ["dep:compcol", "compcol/rar3"]
+compcol-rar5 = ["dep:compcol", "compcol/rar5"]
+
+[dependencies]
+rars = { version = "=0.9.4", default-features = false, optional = true }
+rars-format = { version = "=0.3.2", default-features = false, optional = true }
+unrar-rs = { version = "=0.10.3", default-features = false, optional = true }
+unrar = { version = "=0.5.8", default-features = false, optional = true }
+compcol = { version = "=0.6.11", default-features = false, optional = true }
+
+[lib]
+path = "src/lib.rs"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

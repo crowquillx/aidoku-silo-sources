@@ -1,0 +1,9 @@
+{
+  "id": "multi.silo",
+  "version": 4,
+  "feature": "cbr-native",
+  "wasm_bytes": 403229,
+  "wasm_sha256": "05ced820498d6c77b876871d4a9027fa097bc6736a95e727559524a8afd5be6c",
+  "package_bytes": 172067,
+  "package_sha256": "093224e9437590258fa6cc52da611dd55936bc70814fe5bd7007d51daf91b84d"
+}

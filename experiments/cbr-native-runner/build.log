@@ -1,0 +1,50 @@
+    Updating git repository `https://github.com/Aidoku/aidoku-rs.git`
+    Updating crates.io index
+     Locking 40 packages to latest Rust 1.97.1 compatible versions
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling semver v1.0.28
+   Compiling autocfg v1.5.1
+   Compiling libm v0.2.16
+   Compiling thiserror v2.0.20
+   Compiling serde v1.0.229
+   Compiling byteorder v1.5.0
+   Compiling scopeguard v1.2.0
+   Compiling paste v1.0.15
+   Compiling stable_deref_trait v1.2.1
+   Compiling lock_api v0.4.14
+   Compiling equivalent v1.0.2
+   Compiling hash32 v0.2.1
+   Compiling foldhash v0.2.0
+   Compiling allocator-api2 v0.2.21
+   Compiling rustc_version v0.4.1
+   Compiling talc v4.4.3
+   Compiling itoa v1.0.18
+   Compiling compcol v0.6.11
+   Compiling num-traits v0.2.19
+   Compiling heapless v0.7.17
+   Compiling silo-cbr-native v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-native)
+   Compiling syn v3.0.5
+warning: field `version` is never read
+   --> /home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-native/src/lib.rs:275:2
+    |
+268 | struct Rar4File {
+    |        -------- field in this struct
+...
+275 |     version: u8,
+    |     ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `silo-cbr-native` (lib) generated 1 warning
+   Compiling euclid v0.22.14
+   Compiling hashbrown v0.16.1
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.20
+   Compiling cobs v0.3.0
+   Compiling postcard v1.1.3
+   Compiling aidoku v0.3.0 (https://github.com/Aidoku/aidoku-rs.git#e1320b0a)
+   Compiling silo-cbr-native-runner v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-native-runner)
+    Finished `release` profile [optimized] target(s) in 6.72s

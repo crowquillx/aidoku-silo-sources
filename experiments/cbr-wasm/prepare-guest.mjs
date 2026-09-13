@@ -1,0 +1,12 @@
+import fs from 'node:fs';
+import binaryen from 'binaryen';
+const input=process.argv[2],output=process.argv[3];
+const bytes=fs.readFileSync(input), native=new WebAssembly.Module(bytes),mod=binaryen.readBinary(bytes);
+for(const e of WebAssembly.Module.exports(native))if(!['memory','input_alloc','rar_call'].includes(e.name))mod.removeExport(e.name);
+mod.setFeatures(binaryen.Features.All);
+mod.runPasses(['remove-unused-module-elements','dce','vacuum','strip']);
+if(!mod.validate())throw Error('invalid wasm');
+fs.writeFileSync(output,mod.emitBinary());
+const final=new WebAssembly.Module(fs.readFileSync(output));
+if(WebAssembly.Module.imports(final).length)throw Error('decoder guest must have zero imports');
+console.log(JSON.stringify({bytes:fs.statSync(output).size,imports:WebAssembly.Module.imports(final),exports:WebAssembly.Module.exports(final)}));

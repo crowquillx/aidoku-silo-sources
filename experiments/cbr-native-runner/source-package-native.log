@@ -1,0 +1,20 @@
+   Compiling silo v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/sources/multi.silo)
+    Finished `release` profile [optimized] target(s) in 3.58s
+   Compiling compcol v0.6.11
+   Compiling silo-cbr-native v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-native)
+   Compiling silo v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/sources/multi.silo)
+    Finished `release` profile [optimized] target(s) in 4.78s
+Created /home/tan/Development/projects/aidoku-silo-sources/sources/multi.silo/package-cbr-native.aix
+Experimental main.wasm bytes: 403229
+Experimental package bytes: 170204
+* Testing package-cbr-native.aix
+  * main.wasm
+    * defined minimum version accepts api version... yes
+    * minimum functions exported... yes
+  * icon.png
+    * dimensions are 128x128... yes
+    * is fully opaque... yes
+  * source.json
+    * is valid against schema... yes
+  * settings.json
+    * is valid against schema... yes

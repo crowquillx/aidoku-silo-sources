@@ -1,0 +1,14 @@
+   Compiling compcol-fixture v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-native-probe)
+    Finished `release` profile [optimized] target(s) in 0.37s
+     Running `experiments/cbr-native-probe/target/release/compcol-fixture /home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-wasm/fixtures`
+rar40-normal.cbr 0 method=51 ver=29 compressed=1953 result=Ok((49348, true))
+rar40-normal.cbr 1 method=51 ver=29 compressed=1944 result=Ok((49348, true))
+rar40-normal.cbr 2 method=51 ver=29 compressed=1958 result=Ok((49348, true))
+rar40-solid.cbr 0 method=51 ver=29 compressed=1953 result=Ok((49348, true))
+rar40-solid.cbr 1 method=51 ver=29 compressed=927 result=Ok((49348, true))
+rar40-solid.cbr 2 method=51 ver=29 compressed=1016 result=Ok((49348, true))
+rar50-normal.cbr 0 ci=384 compressed=1530 result=Ok((49348, true))
+rar50-normal.cbr 1 ci=384 compressed=1523 result=Ok((49348, true))
+rar50-normal.cbr 2 ci=384 compressed=1524 result=Ok((49348, true))
+rar50-solid.cbr window=262144
+rar50-solid.cbr solid group result=Ok((148044, true))

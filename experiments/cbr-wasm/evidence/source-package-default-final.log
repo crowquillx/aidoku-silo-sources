@@ -1,0 +1,11 @@
+* Testing package.aix
+  * main.wasm
+    * defined minimum version accepts api version... yes
+    * minimum functions exported... yes
+  * icon.png
+    * dimensions are 128x128... yes
+    * is fully opaque... yes
+  * source.json
+    * is valid against schema... yes
+  * settings.json
+    * is valid against schema... yes

@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "sources/**"
+      - "experiments/cbr-native/**"
       - ".github/actions/install-aidoku-cli/**"
       - ".github/workflows/build.yaml"
   workflow_dispatch:
@@ -51,6 +52,7 @@ jobs:
             (
               cd "$source"
               aidoku package
+              aidoku verify package.aix
             )
             echo "::endgroup::"
           done

@@ -1,0 +1,33 @@
+
+added 3 packages, and audited 4 packages in 788ms
+
+found 0 vulnerabilities
+    Finished `release` profile [optimized] target(s) in 0.05s
+{"bytes":407843,"imports":[],"exports":[{"name":"memory","kind":"memory"},{"name":"input_alloc","kind":"function"},{"name":"rar_call","kind":"function"}]}
+   Compiling silo-cbr-wasm-probe v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-wasm)
+    Finished `release` profile [optimized] target(s) in 9.84s
+   Compiling silo v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/sources/multi.silo)
+    Finished `release` profile [optimized] target(s) in 3.60s
+   Compiling wasmi_core v2.0.0
+   Compiling bitflags v2.13.2
+   Compiling spin v0.9.9
+   Compiling wasmi_collections v2.0.0
+   Compiling wasmparser v0.228.0
+   Compiling wasmi_ir v2.0.0
+   Compiling wasmi v2.0.0
+   Compiling silo v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/sources/multi.silo)
+    Finished `release` profile [optimized] target(s) in 22.85s
+Created /home/tan/Development/projects/aidoku-silo-sources/sources/multi.silo/package-cbr-wasm.aix
+Experimental main.wasm bytes: 1928039
+Experimental package bytes: 556405
+* Testing package-cbr-wasm.aix
+  * main.wasm
+    * defined minimum version accepts api version... yes
+    * minimum functions exported... yes
+  * icon.png
+    * dimensions are 128x128... yes
+    * is fully opaque... yes
+  * source.json
+    * is valid against schema... yes
+  * settings.json
+    * is valid against schema... yes

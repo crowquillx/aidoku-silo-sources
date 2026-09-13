@@ -1,0 +1,18 @@
+   Compiling silo-cbr-native v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-native)
+   Compiling silo v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/sources/multi.silo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.73s
+     Running unittests src/lib.rs (target/wasm32-unknown-unknown/debug/deps/silo-56bd56792c63ac65.wasm)
+
+running 10 tests
+test silo::test::test_v2_against_mock                                     ... ignored
+test silo::test::test_v2_rar_api_key_image_request_and_decode             ... ignored
+test silo::test::test_magic_detection                                     ... ok
+test silo::test::test_rar_page_image_processor_rejects_malformed_response ... ok
+test silo::test::test_natural_cmp                                         ... ok
+test silo::test::test_zip_natural_order_and_filtering                     ... ok
+test silo::test::test_zip_deflate_entry                                   ... ok
+test silo::test::test_rar_fixtures_and_resource_guards                    ... ok
+test silo::test::test_live_listings_and_browse                            ... ok
+test silo::test::test_live_page_list                                      ... ok
+
+test result: ok. 8 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 4.01s

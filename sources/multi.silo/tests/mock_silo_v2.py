@@ -10,6 +10,7 @@ Usage:
 """
 import io
 import json
+from pathlib import Path
 import sys
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -46,6 +47,10 @@ def build_cbz():
 
 
 CBZ = build_cbz()
+RAR = (
+    Path(__file__).resolve().parents[3]
+    / "experiments/cbr-wasm/fixtures/rar40-normal.cbr"
+).read_bytes()
 
 LIBRARIES = {
     "items": [
@@ -133,6 +138,27 @@ CHAPTER = {
     "series_title": "Mock Manga One",
 }
 
+RAR_CHAPTER = {
+    "content_id": "cbr1",
+    "type": "ebook",
+    "title": "RAR Chapter",
+    "versions": [
+        {
+            "file_id": "rar-55",
+            "file_name": "cbr1.cbr",
+            "container": "cbr",
+            "file_size": len(RAR),
+            "duration": 3,
+        }
+    ],
+    "series_id": "m1",
+    "series_title": "Mock Manga One",
+}
+
+
+def archive_content_type(payload):
+    return "application/vnd.comicbook-rar" if payload is RAR else "application/vnd.comicbook+zip"
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
@@ -148,10 +174,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def _bytes(self, payload):
         self.send_response(200)
-        self.send_header("Content-Type", "application/vnd.comicbook+zip")
+        self.send_header("Content-Type", archive_content_type(payload))
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def _authorized_archive_request(self):
+        if self.headers.get("Authorization") not in (
+            "Bearer acc",
+            "Bearer acc2",
+            "Bearer mock-api-key",
+        ):
+            self.send_response(401)
+            self.end_headers()
+            return False
+        if self.headers.get("X-Profile-Id") != "p1":
+            self.send_response(401)
+            self.end_headers()
+            return False
+        return True
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -187,27 +228,36 @@ class Handler(BaseHTTPRequestHandler):
             content_id = path.rsplit("/", 1)[-1]
             if content_id == "c1":
                 return self._json(CHAPTER)
+            if content_id == "cbr1":
+                return self._json(RAR_CHAPTER)
             return self._json(DETAIL)
         if path.startswith("/api/v2/ebooks/") and path.endswith("/read"):
-            return self._range_bytes(CBZ)
+            if not self._authorized_archive_request():
+                return
+            payload = RAR if "/cbr1/" in path else CBZ
+            full = parse_qs(parsed.query).get("full") == ["1"]
+            return self._range_bytes(payload, force_full=full)
         return self._json({"type": "about:blank", "title": "not found", "status": 404}, 404)
 
     def do_HEAD(self):
         path = urlparse(self.path).path
         if path.startswith("/api/v2/ebooks/") and path.endswith("/read"):
+            if not self._authorized_archive_request():
+                return
+            payload = RAR if "/cbr1/" in path else CBZ
             self.send_response(200)
-            self.send_header("Content-Type", "application/vnd.comicbook+zip")
+            self.send_header("Content-Type", archive_content_type(payload))
             self.send_header("Accept-Ranges", "bytes")
-            self.send_header("Content-Length", str(len(CBZ)))
+            self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             return
         self.send_response(200)
         self.end_headers()
 
-    def _range_bytes(self, payload):
+    def _range_bytes(self, payload, force_full=False):
         """Serves `payload` honoring a single `bytes=start-end` Range header."""
         header = self.headers.get("Range")
-        if not header or not header.startswith("bytes="):
+        if force_full or not header or not header.startswith("bytes="):
             return self._bytes(payload)
         start_text, _, end_text = header[len("bytes="):].partition("-")
         total = len(payload)
@@ -217,7 +267,7 @@ class Handler(BaseHTTPRequestHandler):
         end = max(start, min(end, total - 1))
         chunk = payload[start:end + 1]
         self.send_response(206)
-        self.send_header("Content-Type", "application/vnd.comicbook+zip")
+        self.send_header("Content-Type", archive_content_type(payload))
         self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(len(chunk)))

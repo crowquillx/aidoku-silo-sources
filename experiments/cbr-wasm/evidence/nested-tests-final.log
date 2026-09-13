@@ -1,0 +1,10 @@
+   Compiling silo-cbr-wasm-probe v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-wasm)
+    Finished `release` profile [optimized] target(s) in 11.18s
+     Running unittests src/lib.rs (target/wasm32-unknown-unknown/release/deps/silo_cbr_wasm_probe-a25236ab75d624a6.wasm)
+
+running 3 tests
+test silo_cbr_wasm_probe::tests::wasm_in_wasm         ... ok
+test silo_cbr_wasm_probe::tests::npm_modules_validate ... ok
+test silo_cbr_wasm_probe::tests::real_rar4_and_rar5   ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s

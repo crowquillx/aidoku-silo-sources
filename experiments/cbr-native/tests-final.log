@@ -1,0 +1,22 @@
+   Compiling silo-cbr-native v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-native)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s
+     Running unittests src/lib.rs (target/debug/deps/silo_cbr_native-24cd467ff5f4c2a0)
+
+running 9 tests
+test tests::extracts_large_fixtures ... ignored, large fixtures are generated artifacts
+test tests::crc32_matches_standard_vector ... ok
+test tests::enforces_member_and_archive_output_limits ... ok
+test tests::accepts_optional_rar4_end_header_but_rejects_partial_header ... ok
+test tests::lists_real_fixture_members_in_archive_order ... ok
+test tests::rejects_rar3_ppmd_before_decoder_creation ... ok
+test tests::rejects_truncated_and_corrupt_headers ... ok
+test tests::rejects_corrupt_member_crc ... ok
+test tests::extracts_all_real_fixture_pages_exactly ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+   Doc-tests silo_cbr_native
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

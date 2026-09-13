@@ -1,0 +1,9 @@
+
+added 3 packages, and audited 4 packages in 720ms
+
+found 0 vulnerabilities
+   Compiling silo-rar-guest v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-wasm/guest)
+    Finished `release` profile [optimized] target(s) in 3.28s
+{"bytes":407843,"imports":[],"exports":[{"name":"memory","kind":"memory"},{"name":"input_alloc","kind":"function"},{"name":"rar_call","kind":"function"}]}
+   Compiling silo-cbr-wasm-probe v0.1.0 (/home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-wasm)
+    Finished `release` profile [optimized] target(s) in 10.40s

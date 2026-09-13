@@ -1,0 +1,52 @@
+[
+  {
+    "path": "artifacts/rar-guest.wasm",
+    "bytes": 407843,
+    "sha256": "98e64ae78c87093e0f3c5629f6cef20c650c2892509338f9f03ce7afeea124cf"
+  },
+  {
+    "path": "artifacts/rars-npm.wasm",
+    "bytes": 1053743,
+    "sha256": "23c149d5874e1cd0e3a0239e7c17329f219d608419d70eee5a0f41235585855d"
+  },
+  {
+    "path": "artifacts/unrar-npm.wasm",
+    "bytes": 207593,
+    "sha256": "c7d79f869196e3c79c053ba74a8f629116de8293a94f60cc851bbcd7977d0c2b"
+  },
+  {
+    "path": "fixtures/page1.png",
+    "bytes": 49348,
+    "sha256": "406ed69887e122fb6e8f892d234455970e2b3a07cd101f9594252e5346430528"
+  },
+  {
+    "path": "fixtures/page10.png",
+    "bytes": 49348,
+    "sha256": "e111184e0d7ad18045b4c6070536c7ca04699ba0b45aff22393fb2765680011f"
+  },
+  {
+    "path": "fixtures/page2.png",
+    "bytes": 49348,
+    "sha256": "860b0e869588a265f9bc958e0345629cc5599a33fdb728a5e47caa76972706d8"
+  },
+  {
+    "path": "fixtures/rar40-normal.cbr",
+    "bytes": 5999,
+    "sha256": "1ae0d036027a484abf7b5daaf28222096138be9a4fc923c7ecfb3c62e4a13054"
+  },
+  {
+    "path": "fixtures/rar40-solid.cbr",
+    "bytes": 4040,
+    "sha256": "baa23c8986eccacd92296ed293c9c230ce3be1f200edc8544f7786598e87a934"
+  },
+  {
+    "path": "fixtures/rar50-normal.cbr",
+    "bytes": 4815,
+    "sha256": "394850acaf79012dd0ffbbe128492526e4f1290029d4246c9e4cca329bd54cbf"
+  },
+  {
+    "path": "fixtures/rar50-solid.cbr",
+    "bytes": 127742,
+    "sha256": "4d3dee34b9a495cf1ac820375f51808fb242a1e244496c23eb7a982f4ee77d1e"
+  }
+]

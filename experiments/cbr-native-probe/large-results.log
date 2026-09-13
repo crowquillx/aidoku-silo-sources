@@ -1,0 +1,13 @@
+    Finished `release` profile [optimized] target(s) in 0.02s
+     Running `experiments/cbr-native-probe/target/release/compcol-fixture /home/tan/Development/projects/aidoku-silo-sources/experiments/cbr-wasm/artifacts/large`
+rar40-normal.cbr 0 method=48 ver=29 compressed=1180659 result=Ok((1180659, true))
+rar40-normal.cbr 1 method=48 ver=29 compressed=1180659 result=Ok((1180659, true))
+rar40-normal.cbr 2 method=48 ver=29 compressed=1180659 result=Ok((1180659, true))
+rar40-solid.cbr 0 method=48 ver=29 compressed=1180659 result=Ok((1180659, true))
+rar40-solid.cbr 1 method=48 ver=29 compressed=1180659 result=Ok((1180659, true))
+rar40-solid.cbr 2 method=48 ver=29 compressed=1180659 result=Ok((1180659, true))
+rar50-normal.cbr 0 ci=4096 compressed=1180659 result=Ok((1180659, true))
+rar50-normal.cbr 1 ci=4096 compressed=1180659 result=Ok((1180659, true))
+rar50-normal.cbr 2 ci=4096 compressed=1180659 result=Ok((1180659, true))
+rar50-solid.cbr window=4194304
+rar50-solid.cbr solid group result=Ok((3541977, true))

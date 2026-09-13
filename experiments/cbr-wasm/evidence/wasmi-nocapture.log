@@ -1,0 +1,14 @@
+    Finished `release` profile [optimized] target(s) in 0.02s
+     Running unittests src/lib.rs (target/wasm32-unknown-unknown/release/deps/silo_cbr_wasm_probe-a25236ab75d624a6.wasm)
+
+running 2 tests
+rars-0.9.4 bytes=1053743 imports=20
+memory MemoryType { core: MemoryType { inner: MemoryTypeInner { minimum: 18, maximum: None, page_size_log2: 16, index_type: I32 } } }
+without JS glue: cannot find definition for import (./rars_wasm_bg.js,__wbindgen_object_drop_ref) with type Func(FuncType { core: FuncType { params: [I32], results: [] } })
+node-unrar-js-2.0.2 bytes=207593 imports=64
+memory MemoryType { core: MemoryType { inner: MemoryTypeInner { minimum: 256, maximum: Some(32768), page_size_log2: 16, index_type: I32 } } }
+without JS glue: cannot find definition for import (a,a) with type Func(FuncType { core: FuncType { params: [], results: [I32] } })
+test silo_cbr_wasm_probe::tests::npm_modules_validate ... ok
+test silo_cbr_wasm_probe::tests::wasm_in_wasm         ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.59s

@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@bitplane/rars": "0.9.4",
+    "binaryen": "132.0.0",
+    "node-unrar-js": "2.0.2"
+  }
+}
