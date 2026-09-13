@@ -1,0 +1,21 @@
+{
+  "name": "Silo Sources",
+  "sources": [
+    {
+      "id": "multi.silo",
+      "name": "Silo",
+      "version": 4,
+      "iconURL": "icons/multi.silo-v4.png",
+      "downloadURL": "sources/multi.silo-v4.aix",
+      "languages": [
+        "multi"
+      ],
+      "contentRating": 1,
+      "altNames": [
+        "Silo Server"
+      ],
+      "baseURL": "https://siloserver.org",
+      "minAppVersion": "0.7.0"
+    }
+  ]
+}

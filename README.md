@@ -82,7 +82,9 @@ Both Silo APIs are supported:
   remains an opt-in comparison backend.
 - If a device or archive is incompatible, convert CBR to CBZ as a fallback.
   See the [measured CBR report](docs/research/cbr-feasibility.md) and
-  [native CBR build instructions](experiments/cbr-native/README.md).
+  [native CBR build instructions](experiments/cbr-native/README.md). The
+  [comparison with other sources](docs/research/cbr-other-sources.md) describes
+  their server extraction and page APIs.
 - A ZIP mislabeled with a `.cbr` extension still works: the format is detected
   from the file's magic bytes, not its extension.
 

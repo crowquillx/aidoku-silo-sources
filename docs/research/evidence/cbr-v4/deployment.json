@@ -1,0 +1,13 @@
+{
+  "source_commit": "17a4a8d9cec5e0d6210ce764c70f83042b858638",
+  "build_run": "https://github.com/crowquillx/aidoku-silo-sources/actions/runs/34777243396",
+  "pages_commit": "ff42ddf6bf778bb0adad9da40c1952197fd4f8d9",
+  "index_url": "https://crowquillx.github.io/aidoku-silo-sources/index.min.json",
+  "package_url": "https://crowquillx.github.io/aidoku-silo-sources/sources/multi.silo-v4.aix",
+  "version": 4,
+  "package_bytes": 172906,
+  "package_sha256": "cfae9c5a221db97aaaccdef84e582fc4bb07177d15427a0e871da778175b61f8",
+  "wasm_bytes": 405776,
+  "wasm_sha256": "0b364c747ea00f53687bcd8fcab033146307244d9c8fb033ec6005707450b587",
+  "matches_ci_artifact": true
+}

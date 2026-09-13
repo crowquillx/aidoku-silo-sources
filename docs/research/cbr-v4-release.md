@@ -58,6 +58,30 @@ prototype. The package now contains source version 4 and is produced directly
 by Aidoku's CLI; the earlier comparison package used Python ZIP repacking.
 [Local package hashes](evidence/cbr-v4/local-package.json) identify both files.
 
-Publication will use the existing `main` push workflow, then the `gh-pages`
-branch. The deployed index and downloadable package will be checked after the
-workflow completes.
+## Deployment verification
+
+Source commit [`17a4a8d`](https://github.com/crowquillx/aidoku-silo-sources/commit/17a4a8d9cec5e0d6210ce764c70f83042b858638)
+was pushed to `main`. The [build and deployment workflow](https://github.com/crowquillx/aidoku-silo-sources/actions/runs/34777243396)
+succeeded and wrote `gh-pages` commit
+`ff42ddf6bf778bb0adad9da40c1952197fd4f8d9`. GitHub Pages reports that build complete.
+
+The public [source list](https://crowquillx.github.io/aidoku-silo-sources/index.min.json)
+now advertises version 4. Its [downloadable package](https://crowquillx.github.io/aidoku-silo-sources/sources/multi.silo-v4.aix)
+was downloaded, passed `aidoku verify`, and matches the uploaded CI package
+byte for byte. The published package is **172,906 bytes**, with a
+**405,776-byte** WASM payload. CI used Rust **1.98.1**, while the local
+measurements used **1.97.1**, so the compiled payload differs from the local
+benchmark artifact. The deployed module retains the same 19 Aidoku host
+imports and source exports as the tested native module, with no WASI or JS
+imports. The deployment checks do not substitute for a device test.
+
+[Deployment hashes and URLs](evidence/cbr-v4/deployment.json),
+[CI toolchain output](evidence/cbr-v4/ci-toolchain.log),
+[module interfaces](evidence/cbr-v4/deployed-module-interfaces.json),
+[the fetched index](evidence/cbr-v4/deployed-index.json) and
+[package verification output](evidence/cbr-v4/deployed-package-verification.log)
+are preserved. No upstream project or Silo server working tree was modified.
+
+The [comparison with other sources](cbr-other-sources.md) explains which
+servers extract archives, which page APIs Aidoku calls, and what applies to
+Silo's full-archive endpoint.

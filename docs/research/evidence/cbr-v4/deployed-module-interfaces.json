@@ -1,0 +1,161 @@
+{
+  "imports": [
+    {
+      "module": "defaults",
+      "name": "set",
+      "kind": "function"
+    },
+    {
+      "module": "std",
+      "name": "buffer_len",
+      "kind": "function"
+    },
+    {
+      "module": "std",
+      "name": "read_buffer",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "print",
+      "kind": "function"
+    },
+    {
+      "module": "env",
+      "name": "abort",
+      "kind": "function"
+    },
+    {
+      "module": "std",
+      "name": "destroy",
+      "kind": "function"
+    },
+    {
+      "module": "net",
+      "name": "data_len",
+      "kind": "function"
+    },
+    {
+      "module": "net",
+      "name": "read_data",
+      "kind": "function"
+    },
+    {
+      "module": "net",
+      "name": "send",
+      "kind": "function"
+    },
+    {
+      "module": "net",
+      "name": "get_status_code",
+      "kind": "function"
+    },
+    {
+      "module": "net",
+      "name": "set_header",
+      "kind": "function"
+    },
+    {
+      "module": "net",
+      "name": "set_body",
+      "kind": "function"
+    },
+    {
+      "module": "canvas",
+      "name": "get_image_data",
+      "kind": "function"
+    },
+    {
+      "module": "canvas",
+      "name": "new_image",
+      "kind": "function"
+    },
+    {
+      "module": "defaults",
+      "name": "get",
+      "kind": "function"
+    },
+    {
+      "module": "std",
+      "name": "current_date",
+      "kind": "function"
+    },
+    {
+      "module": "net",
+      "name": "init",
+      "kind": "function"
+    },
+    {
+      "module": "net",
+      "name": "set_url",
+      "kind": "function"
+    },
+    {
+      "module": "net",
+      "name": "get_header",
+      "kind": "function"
+    }
+  ],
+  "exports": [
+    {
+      "name": "memory",
+      "kind": "memory"
+    },
+    {
+      "name": "free_result",
+      "kind": "function"
+    },
+    {
+      "name": "get_alternate_covers",
+      "kind": "function"
+    },
+    {
+      "name": "get_filters",
+      "kind": "function"
+    },
+    {
+      "name": "get_home",
+      "kind": "function"
+    },
+    {
+      "name": "get_image_request",
+      "kind": "function"
+    },
+    {
+      "name": "get_listings",
+      "kind": "function"
+    },
+    {
+      "name": "get_manga_list",
+      "kind": "function"
+    },
+    {
+      "name": "get_manga_update",
+      "kind": "function"
+    },
+    {
+      "name": "get_page_list",
+      "kind": "function"
+    },
+    {
+      "name": "get_search_manga_list",
+      "kind": "function"
+    },
+    {
+      "name": "handle_basic_login",
+      "kind": "function"
+    },
+    {
+      "name": "handle_deep_link",
+      "kind": "function"
+    },
+    {
+      "name": "process_page_image",
+      "kind": "function"
+    },
+    {
+      "name": "start",
+      "kind": "function"
+    }
+  ]
+}
