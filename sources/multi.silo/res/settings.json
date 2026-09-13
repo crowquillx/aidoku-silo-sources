@@ -100,12 +100,22 @@
 		"title": "Reading",
 		"items": [
 			{
+				"type": "text",
+				"key": "comicPagesPlugin",
+				"title": "Comic Pages plugin installation ID",
+				"placeholder": "Optional, from Silo Administration → Plugins",
+				"autocorrectionDisabled": true,
+				"autocapitalizationType": 0,
+				"refreshes": ["content"]
+			},
+			{
 				"type": "switch",
 				"key": "markReadOnOpen",
 				"title": "Mark chapters read on Silo",
 				"subtitle": "Marks a chapter as read on Silo when you open it in Aidoku.",
 				"default": true
 			}
-		]
+		],
+		"footer": "Install Comic Pages on Silo and enter its installation ID to extract CBR pages on the server. Leave blank to use the built-in decoder."
 	}
 ]

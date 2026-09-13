@@ -36,6 +36,7 @@ Open the source settings in Aidoku:
 | **Profile** | Optional profile name or ID. Blank uses the primary profile. |
 | **Profile PIN** | Required only for PIN-protected profiles. |
 | **Mark chapters read on Silo** | Marks a chapter read on Silo when opened in Aidoku. |
+| **Comic Pages plugin installation ID** | Optional. Uses the [Comic Pages plugin](https://github.com/crowquillx/silo-comic-pages) for CBR extraction on your server. |
 
 API keys never expire and skip profile PIN prompts, so they are the most
 low-maintenance way to connect a reader.
@@ -52,6 +53,24 @@ Both Silo APIs are supported:
   reason.
 
 `Auto-detect` probes `/api/v2/system/info` and falls back to v1.
+
+### Server extraction for CBR
+
+Source v5 can use the separately installed
+[Comic Pages plugin](https://github.com/crowquillx/silo-comic-pages). Install and
+configure the plugin in Silo, then enter its installation ID in the source's
+Reading settings. With that field set, CBR chapters use server extraction and
+the source downloads individual images. CBZ chapters retain the ZIP range reader.
+
+The source sends its current Silo token and profile in authenticated POST bodies
+to the plugin on the configured Silo server. The plugin checks access before
+serving cached pages. Tokens are absent from page URLs and page contexts. Large
+images arrive in 1 MiB chunks, which the source joins without recompression.
+The page limit is 32 MiB. If the plugin's cache expires, reopen the chapter.
+
+Leave the installation ID blank to use the built-in CBR decoder and its existing
+limits. A configured plugin failure is reported directly, so a large archive
+does not silently fall back to downloading and decoding on the device.
 
 ## Features
 
@@ -71,8 +90,8 @@ Both Silo APIs are supported:
   chapter archive. For CBZ, the source reads the ZIP directory and fetches
   each page's byte range. Source version 4 enables the native `no_std` CBR
   decoder by default through `cbr-native`. It reads tested RAR4 and RAR5
-  normal and solid archives. For CBR, Aidoku downloads the full archive for
-  every page.
+  normal and solid archives. Without the optional Comic Pages plugin,
+  Aidoku downloads the full CBR archive for every page.
 - The native CBR decoder limits the archive to 16 MiB, each unpacked page to
   16 MiB, total unpacked members to 64 MiB, entries to 512, and RAR5
   dictionaries to 8 MiB. A known RAR3 PPMd gap remains: if an LZ stream

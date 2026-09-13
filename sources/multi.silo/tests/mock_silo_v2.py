@@ -10,6 +10,8 @@ Usage:
 """
 import io
 import json
+import struct
+import zlib
 from pathlib import Path
 import sys
 import zipfile
@@ -51,6 +53,20 @@ RAR = (
     Path(__file__).resolve().parents[3]
     / "experiments/cbr-wasm/fixtures/rar40-normal.cbr"
 ).read_bytes()
+
+
+def large_plugin_image():
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    raw = (b'\x00' + b'\x32\x64\x96' * 1024) * 1024
+    return (b'\x89PNG\r\n\x1a\n'
+            + chunk(b'IHDR', struct.pack('>IIBBBBB', 1024, 1024, 8, 2, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(raw, 0)) + chunk(b'IEND', b''))
+
+
+PLUGIN_IMAGE = large_plugin_image()
+PLUGIN_KEY = 'a' * 64
+PLUGIN_POLLS = 0
 
 LIBRARIES = {
     "items": [
@@ -275,6 +291,35 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(chunk)
 
     def do_POST(self):
+        global PLUGIN_POLLS
+        path = urlparse(self.path).path
+        plugin_base = '/api/v2/plugin-content/plugins/comic-test/v1'
+        if path.startswith(plugin_base + '/'):
+            if not self._authorized_archive_request():
+                return
+            body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))))
+            expected = {'token': 'mock-api-key', 'profile_id': 'p1',
+                        'content_id': 'cbr1', 'file_id': 'rar-55', 'api_version': 'v2'}
+            if any(body.get(k) != v for k, v in expected.items()):
+                return self._json({'error': 'incorrect caller credentials'}, 403)
+            if path == plugin_base + '/pages':
+                PLUGIN_POLLS += 1
+                if PLUGIN_POLLS == 1:
+                    return self._json({'status': 'preparing'}, 202)
+                return self._json({'cache_key': PLUGIN_KEY, 'chunk_bytes': 1048576,
+                                   'pages': [{'name': 'page1.png', 'size': len(PLUGIN_IMAGE)}]})
+            if path == plugin_base + '/page/0':
+                if body.get('cache_key') != PLUGIN_KEY:
+                    return self._json({'error': 'reopen chapter'}, 409)
+                offset = body.get('offset', 0)
+                payload = PLUGIN_IMAGE[offset:offset + 1048576]
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            return self._json({'error': 'not found'}, 404)
         if self.path.startswith("/api/v2/auth/login"):
             return self._json(
                 {

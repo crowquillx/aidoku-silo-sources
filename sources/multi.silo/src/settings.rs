@@ -10,6 +10,7 @@ pub const PROFILE_KEY: &str = "profile";
 pub const PIN_KEY: &str = "pin";
 pub const IMAGE_SIZE_KEY: &str = "imageSize";
 pub const MARK_READ_KEY: &str = "markReadOnOpen";
+pub const COMIC_PAGES_KEY: &str = "comicPagesPlugin";
 
 /// The configured Silo server base URL, normalized without a trailing slash.
 pub fn base_url() -> Result<String> {
@@ -58,6 +59,10 @@ pub fn image_size() -> String {
 
 pub fn mark_read_on_open() -> bool {
 	defaults_get::<bool>(MARK_READ_KEY).unwrap_or(true)
+}
+
+pub fn comic_pages_plugin() -> String {
+	non_empty(defaults_get::<String>(COMIC_PAGES_KEY)).unwrap_or_default()
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {

@@ -1,5 +1,10 @@
 # CBR/RAR page handling in other sources
 
+Update, 2026-09-13: the server extraction approach below is now implemented in
+the separate [Comic Pages plugin](https://github.com/crowquillx/silo-comic-pages).
+Source v5 adds its optional integration; see [v5 validation](cbr-v5-release.md).
+The comparison below records the earlier v4 investigation.
+
 This is a source-code comparison for Silo version 4. It treats `cbr-native` as
 enabled by default, with the existing documented constraints: a 16 MiB archive
 and per-member limit, a complete archive response for native RAR listing and

@@ -2,6 +2,7 @@
 extern crate alloc;
 
 mod client;
+mod comic_pages;
 mod models;
 #[cfg(all(feature = "cbr-wasm", not(feature = "cbr-native")))]
 mod rar;
@@ -130,6 +131,13 @@ impl Source for Silo {
 		// while a real RAR takes the opt-in decoder path below.
 		let head = client.chapter_range(&chapter.key, &file_id, 0, Some(7))?;
 		if is_rar_magic(&head.data) {
+			if !settings::comic_pages_plugin().is_empty() {
+				let pages = comic_pages::pages(&client, &chapter.key, &file_id)?;
+				if settings::mark_read_on_open() {
+					let _ = client.mark_read(&chapter.key);
+				}
+				return Ok(pages);
+			}
 			#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
 			{
 				if total == 0 || total > rar::MAX_ARCHIVE_BYTES {
@@ -417,6 +425,9 @@ impl ImageRequestProvider for Silo {
 		let Some(context) = context else {
 			return Request::get(url).map_err(invalid);
 		};
+		if context.get(comic_pages::MARKER).is_some() {
+			return comic_pages::image_request(&url, &context, 0);
+		}
 		#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
 		if context.get(RAR_INDEX_KEY).is_some() {
 			let total = context_u64(&context, RAR_TOTAL_KEY)
@@ -493,6 +504,9 @@ fn load_entries(
 /// Turns a fetched page response into the page's image bytes. A `200` means the
 /// server ignored the range and returned the whole archive.
 fn decode_page(code: u16, data: &[u8], context: &PageContext) -> Result<Vec<u8>> {
+	if context.get(comic_pages::MARKER).is_some() {
+		return comic_pages::decode(code, data, context);
+	}
 	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
 	if context.get(RAR_INDEX_KEY).is_some() {
 		let index =
@@ -1297,5 +1311,76 @@ mod test {
 				))
 			);
 		}
+	}
+
+	#[aidoku_test]
+	#[ignore]
+	fn test_comic_pages_plugin_chunks_and_credentials() {
+		configure_v2_mock();
+		defaults_set("authMode", DefaultValue::String(String::from("apiKey")));
+		defaults_set("apiKey", DefaultValue::String(String::from("mock-api-key")));
+		defaults_set(
+			"accessToken",
+			DefaultValue::String(String::from("stale-token")),
+		);
+		defaults_set(
+			"comicPagesPlugin",
+			DefaultValue::String(String::from("comic-test")),
+		);
+		let source = Silo::new();
+		let pages = source
+			.get_page_list(
+				Manga::default(),
+				Chapter {
+					key: String::from("cbr1"),
+					..Default::default()
+				},
+			)
+			.unwrap();
+		assert_eq!(pages.len(), 1);
+		let PageContent::Url(url, Some(context)) = &pages[0].content else {
+			panic!("expected plugin page");
+		};
+		assert!(!url.contains("mock-api-key"));
+		assert!(
+			context
+				.values()
+				.all(|value| !value.contains("mock-api-key"))
+		);
+		let response = source
+			.get_image_request(url.clone(), Some(context.clone()))
+			.unwrap()
+			.send()
+			.unwrap();
+		assert_eq!(response.status_code(), 200);
+		let first_chunk = response.get_data().unwrap();
+		assert_eq!(first_chunk.len(), 1_048_576);
+		let decoded = decode_page(200, &first_chunk, context).unwrap();
+		assert_eq!(
+			decoded.len() as u64,
+			context_u64(context, "silo_plugin_size").unwrap()
+		);
+		assert!(decoded.len() > 3_000_000);
+		assert!(decoded.starts_with(b"\x89PNG\r\n\x1a\n"));
+		assert!(decoded.ends_with(b"\x00\x00\x00\x00IEND\xaeB`\x82"));
+		assert!(decode_page(403, &first_chunk, context).is_err());
+		assert!(decode_page(200, &first_chunk[..100], context).is_err());
+		assert!(
+			source
+				.get_image_request(
+					String::from("https://other.invalid/page"),
+					Some(context.clone())
+				)
+				.is_err()
+		);
+		defaults_set(
+			"profileId",
+			DefaultValue::String(String::from("different-profile")),
+		);
+		assert!(
+			source
+				.get_image_request(url.clone(), Some(context.clone()))
+				.is_err()
+		);
 	}
 }
