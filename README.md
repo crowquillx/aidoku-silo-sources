@@ -61,15 +61,20 @@ Both Silo APIs are supported:
 - Series details: cover, backdrop (as an alternate cover), overview, authors,
   genres, and publication status.
 - Chapter list with volume/chapter numbers derived from the server.
+- Lazy page loading: only the ZIP central directory and the current page's byte
+  range are fetched over HTTP, so opening a chapter doesn't download the whole
+  archive and memory stays bounded per page.
 - Progress sync: opening a chapter marks it read on Silo (toggleable).
 
 ## Known limitations
 
 - **CBZ only.** Silo exposes no per-page image endpoint; it serves a whole
-  chapter archive, so the source downloads the `.cbz` and extracts pages
-  on-device. **`.cbr` (RAR) archives are not supported** and show a clear error
-  — a pure-Rust RAR decoder that runs in Aidoku's WebAssembly sandbox is not
-  practical. Convert `.cbr` files to `.cbz`, or read them in the Silo web app.
+  chapter archive. The source works around this by reading the ZIP directory
+  and each page's byte range on demand. **`.cbr` (RAR) archives are not
+  supported** and show a clear error — RAR entries would need a RAR decoder
+  running inside Aidoku's WebAssembly sandbox, and no practical pure-Rust
+  option exists. Convert `.cbr` files to `.cbz`, or read them in the Silo web
+  app.
 - **Manga library type only.** Silo has no separate `comic` type, so both manga
   and comics come from `manga` libraries. EPUB/PDF `ebook` libraries are
   intentionally not exposed (Aidoku renders images, not ebooks).
@@ -78,9 +83,6 @@ Both Silo APIs are supported:
 - **Read/unread state** flows from Aidoku to Silo when opening a chapter.
   Aidoku's source API has no hook for page-level progress, so in-chapter
   position is not written back to Silo.
-- **Large chapters** are downloaded and extracted whole, so memory use scales
-  with the chapter's archive size. Typical manga chapters are fine; very large
-  single archives may exceed the reader's memory budget.
 
 ## Development
 

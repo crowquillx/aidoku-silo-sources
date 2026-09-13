@@ -189,8 +189,40 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(CHAPTER)
             return self._json(DETAIL)
         if path.startswith("/api/v2/ebooks/") and path.endswith("/read"):
-            return self._bytes(CBZ)
+            return self._range_bytes(CBZ)
         return self._json({"type": "about:blank", "title": "not found", "status": 404}, 404)
+
+    def do_HEAD(self):
+        path = urlparse(self.path).path
+        if path.startswith("/api/v2/ebooks/") and path.endswith("/read"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.comicbook+zip")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(len(CBZ)))
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.end_headers()
+
+    def _range_bytes(self, payload):
+        """Serves `payload` honoring a single `bytes=start-end` Range header."""
+        header = self.headers.get("Range")
+        if not header or not header.startswith("bytes="):
+            return self._bytes(payload)
+        start_text, _, end_text = header[len("bytes="):].partition("-")
+        total = len(payload)
+        start = int(start_text) if start_text else 0
+        end = int(end_text) if end_text else total - 1
+        start = max(0, min(start, total - 1))
+        end = max(start, min(end, total - 1))
+        chunk = payload[start:end + 1]
+        self.send_response(206)
+        self.send_header("Content-Type", "application/vnd.comicbook+zip")
+        self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(len(chunk)))
+        self.end_headers()
+        self.wfile.write(chunk)
 
     def do_POST(self):
         if self.path.startswith("/api/v2/auth/login"):
