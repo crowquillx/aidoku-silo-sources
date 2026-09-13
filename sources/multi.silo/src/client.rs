@@ -1,6 +1,6 @@
 use crate::{models::*, settings};
 use aidoku::{
-	alloc::{format, string::String, vec::Vec},
+	alloc::{format, string::String, vec, vec::Vec},
 	helpers::uri::encode_uri_component,
 	imports::{
 		defaults::{DefaultValue, defaults_get, defaults_set},
@@ -11,8 +11,15 @@ use aidoku::{
 };
 
 use aidoku::Result;
+use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+
+#[derive(Deserialize, Default)]
+struct SystemInfo {
+	#[serde(default)]
+	api_major: i64,
+}
 
 const ACCESS_TOKEN_KEY: &str = "accessToken";
 const REFRESH_TOKEN_KEY: &str = "refreshToken";
@@ -85,19 +92,57 @@ impl Client {
 	/// Creates a client and completes authentication and profile selection.
 	pub fn connect() -> Result<Self> {
 		let base = settings::base_url()?;
-		let is_v2 = detect_version(&base);
-		let mut client = Self {
-			base,
-			prefix: if is_v2 { "/api/v2" } else { "/api/v1" },
-			is_v2,
-			token: String::new(),
-			profile_id: String::new(),
-			profile_token: None,
-			image_size: settings::image_size(),
+		let forced = settings::api_version();
+		let order: Vec<bool> = match forced.as_str() {
+			"v2" => vec![true],
+			"v1" => vec![false],
+			_ => {
+				let primary = detect_version(&base);
+				if primary {
+					vec![true, false]
+				} else {
+					vec![false, true]
+				}
+			}
 		};
-		client.authenticate(false)?;
-		client.resolve_profile()?;
-		Ok(client)
+
+		let mut last_error = None;
+		for is_v2 in order {
+			println!(
+				"[silo] connecting base={base} api={}",
+				if is_v2 { "v2" } else { "v1" }
+			);
+			let mut client = Self {
+				base: base.clone(),
+				prefix: if is_v2 { "/api/v2" } else { "/api/v1" },
+				is_v2,
+				token: String::new(),
+				profile_id: String::new(),
+				profile_token: None,
+				image_size: settings::image_size(),
+			};
+			match client
+				.authenticate(false)
+				.and_then(|_| client.resolve_profile())
+			{
+				Ok(()) => {
+					println!(
+						"[silo] connected api={} profile={}",
+						client.prefix, client.profile_id
+					);
+					return Ok(client);
+				}
+				Err(err) => {
+					println!("[silo] connect failed api={}: {err:?}", client.prefix);
+					let try_other = forced == "auto" && looks_like_not_found(&err);
+					last_error = Some(err);
+					if !try_other {
+						break;
+					}
+				}
+			}
+		}
+		Err(last_error.unwrap_or_else(|| error!("Could not connect to the Silo server.")))
 	}
 
 	fn url(&self, path: &str) -> String {
@@ -124,6 +169,7 @@ impl Client {
 
 	fn authenticate(&mut self, force: bool) -> Result<()> {
 		if settings::auth_mode() == "apiKey" {
+			println!("[silo] authenticate: api key");
 			let key = settings::api_key();
 			if key.is_empty() {
 				bail!("Set a Silo API key in the source settings.");
@@ -476,14 +522,29 @@ fn detect_version(base: &str) -> bool {
 		"v1" => false,
 		_ => {
 			let url = format!("{base}/api/v2/system/info");
-			match Request::get(url) {
-				Ok(request) => match request.header("Accept", "application/json").send() {
-					Ok(response) => response.status_code() == 200,
-					Err(_) => false,
-				},
-				Err(_) => false,
+			let Ok(request) = Request::get(url) else {
+				return false;
+			};
+			let Ok(response) = request.header("Accept", "application/json").send() else {
+				return false;
+			};
+			if response.status_code() != 200 {
+				return false;
 			}
+			// Only trust a real v2 discovery document, not an SPA/WAF page that
+			// happens to answer 200.
+			response
+				.get_json_owned::<SystemInfo>()
+				.map(|info| info.api_major == 2)
+				.unwrap_or(false)
 		}
+	}
+}
+
+fn looks_like_not_found(error: &aidoku::AidokuError) -> bool {
+	match error {
+		aidoku::AidokuError::Message(message) => message.contains("(404)"),
+		_ => false,
 	}
 }
 

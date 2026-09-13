@@ -3,13 +3,12 @@
 		"id": "multi.silo",
 		"name": "Silo",
 		"altNames": ["Silo Server"],
-		"version": 5,
+		"version": 6,
 		"url": "https://siloserver.org",
 		"contentRating": 1,
 		"languages": ["multi"],
 		"minAppVersion": "0.7.0"
 	},
-	"listings": [],
 	"config": {
 		"supportsTagSearch": true
 	}

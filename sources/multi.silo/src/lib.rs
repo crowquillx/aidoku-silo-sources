@@ -74,6 +74,7 @@ impl Source for Silo {
 		page: i32,
 		filters: Vec<FilterValue>,
 	) -> Result<MangaPageResult> {
+		println!("[silo] search query={query:?} page={page}");
 		let mut client = Client::connect()?;
 		let params = SearchParams::from_filters(&filters);
 		let request = build_catalog_query(&mut client, page, query.as_deref(), &params, None);
@@ -87,6 +88,10 @@ impl Source for Silo {
 		needs_details: bool,
 		needs_chapters: bool,
 	) -> Result<Manga> {
+		println!(
+			"[silo] manga update key={} details={needs_details} chapters={needs_chapters}",
+			manga.key
+		);
 		let mut client = Client::connect()?;
 		let detail = client.item(&manga.key)?;
 		if needs_details {
@@ -110,6 +115,7 @@ impl Source for Silo {
 	}
 
 	fn get_page_list(&self, _manga: Manga, chapter: Chapter) -> Result<Vec<Page>> {
+		println!("[silo] page list chapter={}", chapter.key);
 		let mut client = Client::connect()?;
 		let detail = client.item(&chapter.key)?;
 		let version = detail
@@ -233,6 +239,7 @@ impl Source for Silo {
 
 impl ListingProvider for Silo {
 	fn get_manga_list(&self, listing: Listing, page: i32) -> Result<MangaPageResult> {
+		println!("[silo] listing id={} page={page}", listing.id);
 		let mut client = Client::connect()?;
 		let library_id = listing.id.strip_prefix("library:").map(String::from);
 		let mut query = Query::new();
@@ -252,6 +259,7 @@ impl ListingProvider for Silo {
 
 impl DynamicListings for Silo {
 	fn get_dynamic_listings(&self) -> Result<Vec<Listing>> {
+		println!("[silo] dynamic listings");
 		let mut client = Client::connect()?;
 		let libraries = client.manga_libraries()?;
 		let mut listings = vec![Listing {
@@ -272,6 +280,7 @@ impl DynamicListings for Silo {
 
 impl Home for Silo {
 	fn get_home(&self) -> Result<HomeLayout> {
+		println!("[silo] home");
 		let mut client = Client::connect()?;
 		let libraries = client.manga_libraries()?;
 		let mut components = Vec::new();
@@ -1187,6 +1196,151 @@ mod test {
 		configure();
 		let bytes = decode_first_page("141065514771283970");
 		assert!(!bytes.is_empty());
+	}
+
+	#[aidoku_test]
+	fn test_live_home() {
+		configure();
+		let layout = Silo::new().get_home().unwrap();
+		assert!(!layout.components.is_empty());
+	}
+
+	#[aidoku_test]
+	fn test_live_dynamic_filters() {
+		configure();
+		let filters = Silo::new().get_dynamic_filters().unwrap();
+		assert!(!filters.is_empty());
+	}
+
+	#[aidoku_test]
+	fn test_live_listing_provider() {
+		configure();
+		let listing = Listing {
+			id: String::from("all"),
+			name: String::from("All Manga"),
+			kind: ListingKind::List,
+		};
+		let result = Silo::new().get_manga_list(listing, 1).unwrap();
+		assert!(!result.entries.is_empty());
+	}
+
+	#[aidoku_test]
+	fn test_live_details_only() {
+		configure();
+		let manga = Manga {
+			key: String::from("141023278834647042"),
+			..Default::default()
+		};
+		let updated = Silo::new().get_manga_update(manga, true, false).unwrap();
+		assert!(!updated.title.is_empty());
+		assert!(updated.chapters.is_none());
+	}
+
+	#[aidoku_test]
+	fn test_live_chapters_only() {
+		configure();
+		let manga = Manga {
+			key: String::from("141023278834647042"),
+			title: String::from("placeholder"),
+			..Default::default()
+		};
+		let updated = Silo::new().get_manga_update(manga, false, true).unwrap();
+		assert!(
+			updated
+				.chapters
+				.as_ref()
+				.map(|chapters| !chapters.is_empty())
+				.unwrap_or(false)
+		);
+	}
+
+	#[aidoku_test]
+	fn test_live_basic_login() {
+		configure();
+		let source = Silo::new();
+		assert!(
+			source
+				.handle_basic_login(
+					String::from("credentials"),
+					String::from("test"),
+					String::from("test")
+				)
+				.unwrap()
+		);
+		assert!(
+			!source
+				.handle_basic_login(
+					String::from("credentials"),
+					String::from("test"),
+					String::from("wrong-password")
+				)
+				.unwrap()
+		);
+	}
+
+	#[aidoku_test]
+	fn test_live_image_request_provider() {
+		configure();
+		let source = Silo::new();
+		let pages = source
+			.get_page_list(
+				Manga::default(),
+				Chapter {
+					key: String::from("141065514771283970"),
+					..Default::default()
+				},
+			)
+			.unwrap();
+		let (url, context) = match &pages[0].content {
+			PageContent::Url(url, Some(context)) => (url.clone(), context.clone()),
+			_ => panic!("expected a url page with a context"),
+		};
+		let response = source
+			.get_image_request(url, Some(context.clone()))
+			.unwrap()
+			.send()
+			.unwrap();
+		let code = response.status_code() as u16;
+		let data = response.get_data().unwrap();
+		let page = decode_page(code, &data, &context).unwrap();
+		assert!(!page.is_empty());
+	}
+
+	#[aidoku_test]
+	fn test_live_cover_image_request() {
+		configure();
+		let source = Silo::new();
+		let result = source.get_search_manga_list(None, 1, Vec::new()).unwrap();
+		let cover = result
+			.entries
+			.iter()
+			.find_map(|manga| manga.cover.clone())
+			.unwrap();
+		let response = source
+			.get_image_request(cover, None)
+			.unwrap()
+			.send()
+			.unwrap();
+		let code = response.status_code();
+		assert!((200..400).contains(&code), "cover request returned {code}");
+	}
+
+	#[aidoku_test]
+	fn test_live_alternate_covers_and_deep_link() {
+		configure();
+		let source = Silo::new();
+		let manga = Manga {
+			key: String::from("141023278834647042"),
+			..Default::default()
+		};
+		let covers = source.get_alternate_covers(manga).unwrap();
+		assert!(!covers.is_empty());
+		let deep = source
+			.handle_deep_link(String::from(
+				"https://silo.example.com/item/141023278834647042",
+			))
+			.unwrap();
+		assert!(deep.is_some());
 	}
 
 	fn configure_v2_mock() {
