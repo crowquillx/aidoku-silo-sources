@@ -57,6 +57,13 @@ SHA-256 `e9b956c4d7d09fec458bb5f439cf9251066a953f6f7e27f9fdfa83fda6414032`.
 not import the newer `net::set_timeout` API. GitHub Actions builds and publishes
 the Pages artifact independently; release verification records its actual hash.
 
+The [Pages build](https://github.com/crowquillx/aidoku-silo-sources/actions/runs/34782472434)
+succeeded, and the public index serves version 5. The downloaded release package
+is 180,805 bytes, with a 426,342-byte WASM module. It passed `aidoku verify`;
+the deployed hashes and index are retained in
+[deployment.json](evidence/cbr-v5/deployment.json) and the
+[verification log](evidence/cbr-v5/package-verification.log).
+
 Aidoku's image request bridge preserves POST method and body according to the
 pinned Swift code linked in the plugin protocol. No physical iOS device test or
 live plugin installation was performed. These remain deployment validation
