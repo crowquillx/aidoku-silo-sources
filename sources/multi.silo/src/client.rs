@@ -180,10 +180,14 @@ impl Client {
 
 		if !force {
 			let token = defaults_get::<String>(ACCESS_TOKEN_KEY);
-			let expiry = defaults_get::<i32>(TOKEN_EXPIRY_KEY);
+			// Stored as a string: Aidoku decodes an Int default as Int32 and
+			// traps on values whose postcard zig-zag encoding exceeds Int32
+			// (any timestamp past ~2034-02, but also anything above 2^30).
+			let expiry = defaults_get::<String>(TOKEN_EXPIRY_KEY)
+				.and_then(|value| value.parse::<i64>().ok());
 			if let (Some(token), Some(expiry)) = (token, expiry)
 				&& !token.is_empty()
-				&& current_date() < (expiry as i64) - 60
+				&& current_date() < expiry - 60
 			{
 				self.token = token;
 				return Ok(());
@@ -558,11 +562,7 @@ fn store_tokens(response: &LoginResponse) {
 	}
 	if let Some(expires_in) = response.expires_in {
 		let expiry = current_date().saturating_add(expires_in);
-		if (0..=i32::MAX as i64).contains(&expiry) {
-			defaults_set(TOKEN_EXPIRY_KEY, DefaultValue::Int(expiry as i32));
-		} else {
-			defaults_set(TOKEN_EXPIRY_KEY, DefaultValue::Null);
-		}
+		defaults_set(TOKEN_EXPIRY_KEY, DefaultValue::String(format!("{expiry}")));
 	}
 }
 
