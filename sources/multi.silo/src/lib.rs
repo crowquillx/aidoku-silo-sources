@@ -104,11 +104,16 @@ impl Source for Silo {
 			manga.cover = detail.poster_url.clone();
 		}
 		if needs_chapters {
-			let chapters = detail
+			// Aidoku treats source order as newest-first (its default chapter
+			// sort is "source order, descending"). Silo returns chapters
+			// oldest-first, so reverse them, otherwise Aidoku's "next chapter"
+			// logic starts at the last chapter instead of the first.
+			let mut chapters: Vec<Chapter> = detail
 				.manga
 				.as_ref()
 				.map(|extension| extension.chapters.iter().map(chapter_to_aidoku).collect())
 				.unwrap_or_default();
+			chapters.reverse();
 			manga.chapters = Some(chapters);
 		}
 		Ok(manga)
@@ -1245,13 +1250,13 @@ mod test {
 			..Default::default()
 		};
 		let updated = Silo::new().get_manga_update(manga, false, true).unwrap();
-		assert!(
-			updated
-				.chapters
-				.as_ref()
-				.map(|chapters| !chapters.is_empty())
-				.unwrap_or(false)
-		);
+		let chapters = updated.chapters.unwrap_or_default();
+		assert!(!chapters.is_empty());
+		// Aidoku expects newest-first: the first chapter number must be the
+		// highest, otherwise its "next chapter" logic starts at the wrong end.
+		let first = chapters.first().and_then(|c| c.chapter_number);
+		let last = chapters.last().and_then(|c| c.chapter_number);
+		assert!(first > last, "chapters should be newest-first");
 	}
 
 	#[aidoku_test]
