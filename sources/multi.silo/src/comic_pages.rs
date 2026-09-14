@@ -192,7 +192,7 @@ pub fn image_request(url: &str, context: &PageContext, offset: u64) -> Result<Re
 	if url != page_url(context)? {
 		bail!("Comic Pages URL does not match this Silo server. Reopen the chapter.");
 	}
-	let auth = client::stored_auth();
+	let auth = client::ensure_image_auth();
 	if auth.profile_id != value(context, "silo_plugin_profile")? {
 		bail!("Silo profile changed. Reopen the chapter.");
 	}

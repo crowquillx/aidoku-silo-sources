@@ -547,7 +547,7 @@ fn decode_page(code: u16, data: &[u8], context: &PageContext) -> Result<Vec<u8>>
 }
 
 fn add_stored_auth(mut request: Request) -> Request {
-	let auth = client::stored_auth();
+	let auth = client::ensure_image_auth();
 	let token = if settings::auth_mode() == "apiKey" {
 		settings::api_key()
 	} else {

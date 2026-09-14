@@ -26,6 +26,7 @@ const REFRESH_TOKEN_KEY: &str = "refreshToken";
 const TOKEN_EXPIRY_KEY: &str = "tokenExpiry";
 const PROFILE_ID_KEY: &str = "profileId";
 const PROFILE_TOKEN_KEY: &str = "profileToken";
+const DETECTED_VERSION_KEY: &str = "detectedVersion";
 
 pub const PAGE_SIZE: i32 = 30;
 
@@ -121,6 +122,12 @@ impl Client {
 				profile_token: None,
 				image_size: settings::image_size(),
 			};
+			// Remember which API version worked so per-image auth can use the
+			// right prefix without a network round trip.
+			defaults_set(
+				DETECTED_VERSION_KEY,
+				DefaultValue::String(String::from(if is_v2 { "v2" } else { "v1" })),
+			);
 			match client
 				.authenticate(false)
 				.and_then(|_| client.resolve_profile())
@@ -611,14 +618,72 @@ pub struct StoredAuth {
 	pub profile_token: Option<String>,
 }
 
-/// Reads the last-resolved credentials from defaults without any network call.
-/// Used by `ImageRequestProvider`, which runs once per page.
-pub fn stored_auth() -> StoredAuth {
-	StoredAuth {
-		token: defaults_get::<String>(ACCESS_TOKEN_KEY).filter(|value| !value.is_empty()),
-		profile_id: defaults_get::<String>(PROFILE_ID_KEY).unwrap_or_default(),
-		profile_token: defaults_get::<String>(PROFILE_TOKEN_KEY).filter(|value| !value.is_empty()),
+/// Reads the credentials to use for a direct image request, refreshing the
+/// session if the cached access token has expired. `ImageRequestProvider` runs
+/// this once per image, so the fast path is a defaults read; it only performs a
+/// network request when the token is actually stale (which otherwise left page
+/// images unauthenticated after a long reading session).
+pub fn ensure_image_auth() -> StoredAuth {
+	let profile_id = defaults_get::<String>(PROFILE_ID_KEY).unwrap_or_default();
+	let profile_token = defaults_get::<String>(PROFILE_TOKEN_KEY).filter(|value| !value.is_empty());
+	let cached = defaults_get::<String>(ACCESS_TOKEN_KEY).filter(|value| !value.is_empty());
+
+	if settings::auth_mode() == "apiKey" {
+		let key = settings::api_key();
+		return StoredAuth {
+			token: (!key.is_empty()).then_some(key),
+			profile_id,
+			profile_token,
+		};
 	}
+
+	if let (Some(token), Some(expiry)) = (cached.clone(), expiry_from_defaults())
+		&& current_date() < expiry - 60
+	{
+		return StoredAuth {
+			token: Some(token),
+			profile_id,
+			profile_token,
+		};
+	}
+
+	let Ok(base) = settings::base_url() else {
+		return StoredAuth {
+			token: cached,
+			profile_id,
+			profile_token,
+		};
+	};
+	let is_v2 = defaults_get::<String>(DETECTED_VERSION_KEY)
+		.map(|value| value == "v2")
+		.unwrap_or(false);
+	println!("[silo] image auth: refreshing session");
+	let mut client = Client {
+		base,
+		prefix: if is_v2 { "/api/v2" } else { "/api/v1" },
+		is_v2,
+		token: String::new(),
+		profile_id: profile_id.clone(),
+		profile_token: profile_token.clone(),
+		image_size: settings::image_size(),
+	};
+	if client.authenticate(false).is_ok() && !client.token.is_empty() {
+		return StoredAuth {
+			token: Some(client.token),
+			profile_id,
+			profile_token,
+		};
+	}
+	// Best effort: use whatever token we had.
+	StoredAuth {
+		token: cached,
+		profile_id,
+		profile_token,
+	}
+}
+
+fn expiry_from_defaults() -> Option<i64> {
+	defaults_get::<String>(TOKEN_EXPIRY_KEY).and_then(|value| value.parse::<i64>().ok())
 }
 
 /// A fetched archive byte range.
