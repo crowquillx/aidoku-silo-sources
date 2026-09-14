@@ -431,8 +431,13 @@ impl ImageRequestProvider for Silo {
 	fn get_image_request(&self, url: String, context: Option<PageContext>) -> Result<Request> {
 		let invalid =
 			|e: aidoku::imports::net::RequestError| error!("Invalid image request: {e:?}");
+		// Only pages we generated (which carry a context) need a modified
+		// request. Covers and other artwork are presigned and must be fetched
+		// with the plain URL; returning a request here is both unnecessary and
+		// goes through Aidoku's request-descriptor decoding, which is the crash
+		// path reported on the browse screen.
 		let Some(context) = context else {
-			return Request::get(url).map_err(invalid);
+			bail!("Silo uses the plain URL for this image.");
 		};
 		if context.get(comic_pages::MARKER).is_some() {
 			return comic_pages::image_request(&url, &context, 0);

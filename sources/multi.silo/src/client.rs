@@ -557,8 +557,12 @@ fn store_tokens(response: &LoginResponse) {
 		defaults_set(REFRESH_TOKEN_KEY, DefaultValue::String(refresh.clone()));
 	}
 	if let Some(expires_in) = response.expires_in {
-		let expiry = current_date() + expires_in;
-		defaults_set(TOKEN_EXPIRY_KEY, DefaultValue::Int(expiry as i32));
+		let expiry = current_date().saturating_add(expires_in);
+		if (0..=i32::MAX as i64).contains(&expiry) {
+			defaults_set(TOKEN_EXPIRY_KEY, DefaultValue::Int(expiry as i32));
+		} else {
+			defaults_set(TOKEN_EXPIRY_KEY, DefaultValue::Null);
+		}
 	}
 }
 
