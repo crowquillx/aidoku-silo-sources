@@ -6,7 +6,13 @@ on:
       - main
     paths:
       - "sources/**"
-      - "experiments/cbr-native/**"
+      - "crates/**"
+      - ".github/actions/install-aidoku-cli/**"
+      - ".github/workflows/build.yaml"
+  pull_request:
+    paths:
+      - "sources/**"
+      - "crates/**"
       - ".github/actions/install-aidoku-cli/**"
       - ".github/workflows/build.yaml"
   workflow_dispatch:
@@ -27,6 +33,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
 
       - name: Cache rust stuff
         uses: actions/cache@v4
@@ -40,6 +47,28 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - uses: ./.github/actions/install-aidoku-cli
+
+      - name: Check sources
+        run: |
+          set -euo pipefail
+
+          (cd crates/cbr-native && cargo fmt --check && cargo test --locked)
+
+          cd sources/multi.silo
+          cargo fmt --check
+          cargo clippy --locked --tests -- -D warnings
+          cargo test --locked -- test_unit_
+
+          # The v2 contract tests run against a local mock; the live tests
+          # need a real Silo server and stay manual.
+          python3 tests/mock_silo_v2.py &
+          mock=$!
+          trap 'kill "$mock"' EXIT
+          for _ in $(seq 50); do
+            curl -sf http://127.0.0.1:8799/api/v2/system/info >/dev/null && break
+            sleep 0.2
+          done
+          cargo test --locked -- --ignored test_mock_
 
       - name: Build sources
         run: |
