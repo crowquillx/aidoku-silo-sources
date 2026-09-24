@@ -1,8 +1,7 @@
 # silo-cbr-native
 
-Standalone `no_std` RAR container and decompression implementation for the CBR
-experiment. Source version 4 enables it by default through `cbr-native`.
-`cbr-wasm` remains an opt-in comparison backend. The crate uses only
+Standalone `no_std` RAR container and decompression implementation used by the
+Silo source's default `cbr-native` feature. The crate uses only
 `compcol = 0.6.11` as a normal dependency, with its default features disabled
 and `rar3` and `rar5` enabled.
 
@@ -48,34 +47,28 @@ remaining midstream allocation risk.
 
 The crate consumes the complete archive slice. The `cbr-native` Aidoku source
 feature downloads the full archive for every page and sorts image members in
-natural filename order. It takes precedence if both CBR features are enabled.
-The native path has a known midstream RAR3 PPMd allocation gap and has not been
+natural filename order. The native path has a known midstream RAR3 PPMd allocation gap and has not been
 validated on an Aidoku device, so it is not fully hardened. Convert CBR to CBZ
 if an archive or device cannot use this path.
 
 From the repository root:
 
 ```sh
-scripts/package-cbr-prototype.sh cbr-native
 cd sources/multi.silo
-cargo test --features cbr-native
-cargo clippy --release --target wasm32-unknown-unknown --features cbr-native
-cargo test --no-default-features  # no-CBR comparison
+cargo test -- test_unit_          # includes the RAR fixture tests
+cargo test --no-default-features  # build without CBR support
 ```
 
-The package is `sources/multi.silo/package-cbr-native.aix`. The regular
-`package.aix` uses source version 4 and native CBR by default. The explicit
-native package selects the same backend. This remains an experimental CBR
-implementation while device validation and the midstream PPMd allocation fix
-are pending.
+This remains an experimental CBR implementation while device validation and
+the midstream PPMd allocation fix are pending.
 
 Standalone parser checks:
 
 ```sh
-cd experiments/cbr-native
+cd crates/cbr-native
 cargo test
 cargo check --target wasm32-unknown-unknown
-# After generating the larger fixtures as documented in ../cbr-wasm/README.md:
+# After generating the larger fixtures as documented in ../../experiments/cbr-wasm/README.md:
 cargo test -- --ignored
 ```
 

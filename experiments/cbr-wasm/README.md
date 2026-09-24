@@ -1,5 +1,11 @@
 # Nested RAR prototype
 
+> **Archived.** The Silo source no longer has the `cbr-wasm` feature; it ships
+> only the native decoder in [`crates/cbr-native`](../../crates/cbr-native/README.md).
+> The source-side commands below apply to the source as it was when this
+> comparison ran. The shared RAR fixtures now live in
+> [`crates/cbr-native/fixtures`](../../crates/cbr-native/fixtures/README.md).
+
 This experiment proves that an Aidoku `no_std` source can interpret an
 import-free RAR decoder. The source feature is `cbr-wasm`, an opt-in comparison
 backend. Source version 4 enables the native `cbr-native` backend by default.
@@ -111,7 +117,7 @@ not a four-gigabyte output. The source maps that class of interpreter failure
 to a readable error. `benchmark-large.mjs` also tries a much larger diagnostic
 fuel budget; that value is never used by the source feature.
 
-[Fixture provenance](fixtures/README.md), SHA-256 hashes, import/memory logs,
+[Fixture provenance](../../crates/cbr-native/fixtures/README.md), SHA-256 hashes, import/memory logs,
 license metadata and timing output are included in `evidence/`. Early logs
 are retained for failed experiments as well; final `*-200k.log` and
 `nested-tests.log` files are the current runtime evidence.

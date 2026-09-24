@@ -194,7 +194,7 @@ pub fn extract_local(
 }
 
 /// Whether an archive path is an image page rather than metadata.
-fn is_image(name: &str) -> bool {
+pub fn is_image(name: &str) -> bool {
 	if name.ends_with('/') {
 		return false;
 	}

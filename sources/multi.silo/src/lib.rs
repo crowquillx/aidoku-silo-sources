@@ -4,27 +4,23 @@ extern crate alloc;
 mod client;
 mod comic_pages;
 mod models;
-#[cfg(all(feature = "cbr-wasm", not(feature = "cbr-native")))]
-mod rar;
 #[cfg(feature = "cbr-native")]
-#[path = "rar_native.rs"]
 mod rar;
 mod settings;
 mod zip;
 
 use aidoku::{
-	AlternateCoverProvider, BasicLoginHandler, Chapter, DeepLinkHandler, DeepLinkResult,
-	DynamicFilters, DynamicListings, Filter, FilterValue, Home, HomeComponent, HomeComponentValue,
-	HomeLayout, ImageRequestProvider, ImageResponse, Link, LinkValue, Listing, ListingKind,
-	ListingProvider, Manga, MangaPageResult, MangaStatus, Page, PageContent, PageContext,
-	PageImageProcessor, RangeFilter, Result, SelectFilter, SortFilter, Source, TextFilter,
+	AlternateCoverProvider, BaseUrlProvider, BasicLoginHandler, Chapter, DeepLinkHandler,
+	DeepLinkResult, DynamicFilters, DynamicListings, Filter, FilterValue, Home, HomeComponent,
+	HomeComponentValue, HomeLayout, ImageRequestProvider, ImageResponse, Link, LinkValue, Listing,
+	ListingKind, ListingProvider, Manga, MangaPageResult, MangaStatus, Page, PageContent,
+	PageContext, PageImageProcessor, Result, SelectFilter, Source,
 	alloc::{borrow::Cow, format, string::String, vec, vec::Vec},
-	helpers::uri::encode_uri_component,
 	imports::{canvas::ImageRef, net::Request},
 	prelude::*,
 };
 use client::{Client, PAGE_SIZE, Query};
-use models::{CatalogResponse, Item, ItemDetail, MangaChapter, SectionResponse};
+use models::{CatalogResponse, Item, ItemDetail, Library, MangaChapter};
 
 /// Page context keys carrying one archive entry's location, so a page can be
 /// fetched and inflated independently of the rest of the archive.
@@ -32,33 +28,17 @@ const OFF_KEY: &str = "silo_off";
 const LEN_KEY: &str = "silo_len";
 const METHOD_KEY: &str = "silo_method";
 const SIZE_KEY: &str = "silo_usize";
-#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
-const RAR_INDEX_KEY: &str = "silo_rar_index";
-#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
-const RAR_TOTAL_KEY: &str = "silo_rar_total";
-#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
-const RAR_SIZE_KEY: &str = "silo_rar_size";
 
-/// Sort options presented to the user, each mapping to a Silo sort field and
-/// order. `can_ascend` is false so the direction is explicit per option.
-const SORT_LABELS: [&str; 7] = [
-	"Title (A–Z)",
-	"Title (Z–A)",
-	"Recently Added",
-	"Oldest Added",
-	"Newest Released",
-	"Highest Rated",
-	"Author (A–Z)",
-];
-
-const SORT_FIELDS: [(&str, &str); 7] = [
-	("title", "asc"),
-	("title", "desc"),
-	("added_at", "desc"),
-	("added_at", "asc"),
-	("release_date", "desc"),
-	("rating_imdb", "desc"),
-	("author", "asc"),
+/// The Silo sort field and direction (`true` is descending) behind each
+/// option of the `sort` filter in `res/filters.json`.
+const SORT_FIELDS: [(&str, bool); 7] = [
+	("title", false),
+	("title", true),
+	("added_at", true),
+	("added_at", false),
+	("release_date", true),
+	("rating_imdb", true),
+	("author", false),
 ];
 
 struct Silo;
@@ -77,9 +57,8 @@ impl Source for Silo {
 		println!("[silo] search query={query:?} page={page}");
 		let mut client = Client::connect()?;
 		let params = SearchParams::from_filters(&filters);
-		let request = build_catalog_query(&mut client, page, query.as_deref(), &params, None);
-		let response = client.catalog(&request)?;
-		Ok(to_page_result(response))
+		let request = search_query(&client, page, query.as_deref(), &params);
+		Ok(to_page_result(client.catalog(&request)?))
 	}
 
 	fn get_manga_update(
@@ -110,9 +89,9 @@ impl Source for Silo {
 			// logic starts at the last chapter instead of the first.
 			let mut chapters: Vec<Chapter> = detail
 				.manga
-				.as_ref()
-				.map(|extension| extension.chapters.iter().map(chapter_to_aidoku).collect())
-				.unwrap_or_default();
+				.iter()
+				.flat_map(|extension| extension.chapters.iter().map(chapter_to_aidoku))
+				.collect();
 			chapters.reverse();
 			manga.chapters = Some(chapters);
 		}
@@ -129,114 +108,45 @@ impl Source for Silo {
 			.ok_or_else(|| error!("This chapter has no readable file on the Silo server."))?;
 		let container = version
 			.container
-			.clone()
+			.as_deref()
 			.unwrap_or_default()
 			.to_ascii_lowercase();
-
 		let file_id = version.file_id.as_string();
-		let total = client
-			.chapter_size(&chapter.key, &file_id)?
-			.ok_or_else(|| error!("The Silo server did not report the archive size."))?;
 
-		// Decide by content, not extension: a ZIP mislabeled `.cbr` still works,
-		// while a real RAR takes the opt-in decoder path below.
+		// Decide by content, not extension: a ZIP mislabeled `.cbr` still works.
+		// The `206` also reports the archive length in its `Content-Range`.
 		let head = client.chapter_range(&chapter.key, &file_id, 0, Some(7))?;
-		if is_rar_magic(&head.data) {
-			if !settings::comic_pages_plugin().is_empty() {
-				let pages = comic_pages::pages(&client, &chapter.key, &file_id)?;
-				if settings::mark_read_on_open() {
-					let _ = client.mark_read(&chapter.key);
-				}
-				return Ok(pages);
-			}
-			#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
-			{
-				if total == 0 || total > rar::MAX_ARCHIVE_BYTES {
-					bail!("RAR archive is empty or exceeds the 16 MiB limit.");
-				}
-				let archive = client.chapter_range(&chapter.key, &file_id, 0, Some(total - 1))?;
-				if archive.status != 200 && archive.status != 206 {
-					bail!("RAR archive request returned HTTP {}.", archive.status);
-				}
-				if archive.data.len() as u64 != total {
-					bail!("RAR archive response was truncated.");
-				}
-				let page_entries = rar::list_pages(&archive.data)?;
-
-				if settings::mark_read_on_open() {
-					let _ = client.mark_read(&chapter.key);
-				}
-				let archive_url = format!(
-					"{}{}/ebooks/{}/files/{}/read",
-					client.base,
-					client.prefix,
-					encode_uri_component(&chapter.key),
-					encode_uri_component(&file_id)
-				);
-				let mut pages = Vec::with_capacity(page_entries.len());
-				for (index, entry) in page_entries.iter().enumerate() {
-					let mut context = PageContext::new();
-					context.insert(String::from(RAR_INDEX_KEY), format!("{}", entry.index));
-					context.insert(String::from(RAR_TOTAL_KEY), format!("{total}"));
-					context.insert(String::from(RAR_SIZE_KEY), format!("{}", entry.size));
-					pages.push(Page {
-						content: PageContent::url_context(
-							format!("{archive_url}?aidoku_page={index}"),
-							context,
-						),
-						..Default::default()
-					});
-				}
-				return Ok(pages);
-			}
-			#[cfg(not(any(feature = "cbr-native", feature = "cbr-wasm")))]
-			{
-				bail!(
-					"CBR/RAR comic archives aren't supported. Convert this file to CBZ or read it in the Silo web reader."
-				);
-			}
-		}
-		if !is_zip_magic(&head.data) {
+		let total = head
+			.total
+			.ok_or_else(|| error!("The Silo server did not report the archive size."))?;
+		let pages = if is_rar_magic(&head.data) {
+			rar_pages(&mut client, &chapter.key, &file_id, total)?
+		} else if !is_zip_magic(&head.data) {
 			bail!(
 				"This chapter is a .{container} file, which this source can't render. Use the Silo web reader for it."
 			);
-		}
-		if !matches!(container.as_str(), "" | "cbz" | "cbr" | "rar") {
+		} else if !matches!(container.as_str(), "" | "cbz" | "cbr" | "rar") {
 			bail!("This chapter is a .{container} file, not a CBZ comic archive.");
-		}
+		} else {
+			let entries =
+				zip::image_pages(load_entries(&mut client, &chapter.key, &file_id, total)?);
+			if entries.is_empty() {
+				bail!("The comic archive contains no readable images.");
+			}
+			archive_pages(&client, &chapter.key, &file_id, &entries, |entry| {
+				[
+					(OFF_KEY, entry.local_offset),
+					(LEN_KEY, entry.comp_size),
+					(METHOD_KEY, entry.method as u64),
+					(SIZE_KEY, entry.uncomp_size),
+				]
+			})
+		};
 
-		let entries = load_entries(&mut client, &chapter.key, &file_id, total)?;
-		let page_entries = zip::image_pages(entries);
-		if page_entries.is_empty() {
-			bail!("The comic archive contains no readable images.");
-		}
-
+		// Aidoku also requests page lists to download chapters, so this marks
+		// downloaded chapters too (the setting's subtitle says so).
 		if settings::mark_read_on_open() {
 			let _ = client.mark_read(&chapter.key);
-		}
-
-		let archive_url = format!(
-			"{}{}/ebooks/{}/files/{}/read",
-			client.base,
-			client.prefix,
-			encode_uri_component(&chapter.key),
-			encode_uri_component(&file_id)
-		);
-
-		let mut pages = Vec::with_capacity(page_entries.len());
-		for (index, entry) in page_entries.iter().enumerate() {
-			let mut context = PageContext::new();
-			context.insert(String::from(OFF_KEY), format!("{}", entry.local_offset));
-			context.insert(String::from(LEN_KEY), format!("{}", entry.comp_size));
-			context.insert(String::from(METHOD_KEY), format!("{}", entry.method));
-			context.insert(String::from(SIZE_KEY), format!("{}", entry.uncomp_size));
-			pages.push(Page {
-				content: PageContent::url_context(
-					format!("{archive_url}?aidoku_page={index}"),
-					context,
-				),
-				..Default::default()
-			});
 		}
 		Ok(pages)
 	}
@@ -246,39 +156,40 @@ impl ListingProvider for Silo {
 	fn get_manga_list(&self, listing: Listing, page: i32) -> Result<MangaPageResult> {
 		println!("[silo] listing id={} page={page}", listing.id);
 		let mut client = Client::connect()?;
-		let library_id = listing.id.strip_prefix("library:").map(String::from);
 		let mut query = Query::new();
-		query.add("type", "manga");
 		query.add_i64("limit", PAGE_SIZE as i64);
 		query.add("image_size", &client.image_size);
-		if let Some(id) = &library_id {
-			query.add("library_id", id);
+		if let Some(rest) = listing.id.strip_prefix("section:") {
+			// A home section's own items, in the section's order.
+			let (library_id, section_id) = rest
+				.split_once(':')
+				.ok_or_else(|| error!("Unknown listing {}.", listing.id))?;
+			query.add("source", "section");
+			query.add("scope", "library");
+			query.add("library_id", library_id);
+			query.add("section_id", section_id);
+		} else {
+			query.add("type", "manga");
+			if let Some(library_id) = listing.id.strip_prefix("library:") {
+				query.add("library_id", library_id);
+			}
+			add_sort(&mut query, &client, "title", false);
 		}
-		query.add("sort", "title");
-		query.add("order", "asc");
 		add_pagination(&mut query, &client, page);
-		let response = client.catalog(&query)?;
-		Ok(to_page_result(response))
+		Ok(to_page_result(client.catalog(&query)?))
 	}
 }
 
 impl DynamicListings for Silo {
 	fn get_dynamic_listings(&self) -> Result<Vec<Listing>> {
 		println!("[silo] dynamic listings");
-		let mut client = Client::connect()?;
-		let libraries = client.manga_libraries()?;
+		let libraries = Client::connect()?.manga_libraries()?;
 		let mut listings = vec![Listing {
 			id: String::from("all"),
 			name: String::from("All Manga"),
 			kind: ListingKind::List,
 		}];
-		for library in libraries {
-			listings.push(Listing {
-				id: format!("library:{}", library.id.as_string()),
-				name: library.name,
-				kind: ListingKind::List,
-			});
-		}
+		listings.extend(libraries.iter().map(library_listing));
 		Ok(listings)
 	}
 }
@@ -289,140 +200,119 @@ impl Home for Silo {
 		let mut client = Client::connect()?;
 		let libraries = client.manga_libraries()?;
 		let mut components = Vec::new();
-
-		let mut library_links = Vec::new();
-		for library in &libraries {
-			library_links.push(Link {
-				title: library.name.clone(),
-				value: Some(LinkValue::Listing(Listing {
-					id: format!("library:{}", library.id.as_string()),
-					name: library.name.clone(),
-					kind: ListingKind::List,
-				})),
-				..Default::default()
-			});
-		}
-		if !library_links.is_empty() {
+		if !libraries.is_empty() {
 			components.push(HomeComponent {
 				title: Some(String::from("Libraries")),
 				subtitle: None,
-				value: HomeComponentValue::Links(library_links),
+				value: HomeComponentValue::Links(
+					libraries
+						.iter()
+						.map(|library| Link {
+							title: library.name.clone(),
+							value: Some(LinkValue::Listing(library_listing(library))),
+							..Default::default()
+						})
+						.collect(),
+				),
 			});
 		}
 
 		for library in libraries.iter().take(4) {
-			let Ok(response) = client.library_sections(&library.id.as_string()) else {
+			let library_id = library.id.as_string();
+			let Ok(response) = client.library_sections(&library_id) else {
 				continue;
 			};
-			add_section_components(&mut components, &response, library);
+			for section in response.sections.iter().take(6) {
+				if section.items.is_empty() {
+					continue;
+				}
+				components.push(HomeComponent {
+					title: Some(section.title.clone()),
+					subtitle: None,
+					value: HomeComponentValue::Scroller {
+						entries: section
+							.items
+							.iter()
+							.map(|item| item_to_manga(item).into())
+							.collect(),
+						listing: Some(Listing {
+							id: format!("section:{library_id}:{}", section.id),
+							name: section.title.clone(),
+							kind: ListingKind::List,
+						}),
+					},
+				});
+			}
 		}
 
 		Ok(HomeLayout { components })
 	}
 }
 
+/// Only the genre list comes from the server; the other filters are static
+/// in `res/filters.json`.
 impl DynamicFilters for Silo {
 	fn get_dynamic_filters(&self) -> Result<Vec<Filter>> {
-		let mut client = Client::connect()?;
-		let mut filters: Vec<Filter> = vec![
-			TextFilter {
-				id: Cow::Borrowed("author"),
-				title: Some(Cow::Borrowed("Author")),
-				placeholder: Some(Cow::Borrowed("Filter by author")),
-				..Default::default()
-			}
-			.into(),
-		];
-
-		if let Ok(server_filters) = client.catalog_filters(None)
-			&& !server_filters.genres.is_empty()
-		{
-			filters.push(
-				SelectFilter {
-					id: Cow::Borrowed("genre"),
-					title: Some(Cow::Borrowed("Genre")),
-					is_genre: true,
-					uses_tag_style: true,
-					options: server_filters
-						.genres
-						.iter()
-						.map(|genre| Cow::Owned(genre.clone()))
-						.collect(),
-					..Default::default()
-				}
-				.into(),
-			);
+		let genres = Client::connect()
+			.and_then(|mut client| client.catalog_filters())
+			.map(|filters| filters.genres)
+			.unwrap_or_default();
+		if genres.is_empty() {
+			return Ok(Vec::new());
 		}
-
-		filters.push(
-			RangeFilter {
-				id: Cow::Borrowed("year"),
-				title: Some(Cow::Borrowed("Year")),
-				min: Some(1900.0),
-				max: Some(2100.0),
-				decimal: false,
+		Ok(vec![
+			SelectFilter {
+				id: Cow::Borrowed("genre"),
+				title: Some(Cow::Borrowed("Genre")),
+				is_genre: true,
+				uses_tag_style: true,
+				options: genres.into_iter().map(Cow::Owned).collect(),
 				..Default::default()
 			}
 			.into(),
-		);
-		filters.push(
-			SortFilter {
-				id: Cow::Borrowed("sort"),
-				title: Some(Cow::Borrowed("Sort")),
-				can_ascend: false,
-				options: SORT_LABELS
-					.iter()
-					.map(|label| Cow::Borrowed(*label))
-					.collect(),
-				..Default::default()
-			}
-			.into(),
-		);
+		])
+	}
+}
 
-		Ok(filters)
+/// The configured server, so Aidoku routes links to it to `DeepLinkHandler`.
+impl BaseUrlProvider for Silo {
+	fn get_base_url(&self) -> Result<String> {
+		settings::base_url()
 	}
 }
 
 impl DeepLinkHandler for Silo {
 	fn handle_deep_link(&self, url: String) -> Result<Option<DeepLinkResult>> {
-		if let Some(rest) = url.split("/item/").nth(1) {
-			let key = rest.split(['?', '#', '/']).next().unwrap_or("");
-			if !key.is_empty() {
-				return Ok(Some(DeepLinkResult::Manga {
-					key: String::from(key),
-				}));
-			}
+		let segment = |marker: &str| {
+			url.split(marker)
+				.nth(1)
+				.and_then(|rest| rest.split(['?', '#', '/']).next())
+				.filter(|value| !value.is_empty())
+				.map(String::from)
+		};
+		if let Some(key) = segment("/item/") {
+			return Ok(Some(DeepLinkResult::Manga { key }));
 		}
-		if let Some(rest) = url.split("/library/").nth(1) {
-			let id = rest.split(['?', '#', '/']).next().unwrap_or("");
-			if !id.is_empty() {
-				return Ok(Some(DeepLinkResult::Listing(Listing {
-					id: format!("library:{id}"),
-					name: String::from(id),
-					kind: ListingKind::List,
-				})));
-			}
-		}
-		Ok(None)
+		Ok(segment("/library/").map(|id| {
+			DeepLinkResult::Listing(Listing {
+				id: format!("library:{id}"),
+				name: id,
+				kind: ListingKind::List,
+			})
+		}))
 	}
 }
 
 impl BasicLoginHandler for Silo {
 	fn handle_basic_login(&self, _key: String, username: String, password: String) -> Result<bool> {
-		let base = settings::base_url()?;
-		let is_v2 = client::probe_version(&base);
-		client::validate_credentials(&base, is_v2, &username, &password)
+		client::validate_login(&username, &password)
 	}
 }
 
 impl AlternateCoverProvider for Silo {
 	fn get_alternate_covers(&self, manga: Manga) -> Result<Vec<String>> {
-		let mut client = Client::connect()?;
-		let detail = client.item(&manga.key)?;
-		let mut covers = Vec::new();
-		if let Some(backdrop) = detail.backdrop_url {
-			covers.push(backdrop);
-		}
+		let detail = Client::connect()?.item(&manga.key)?;
+		let mut covers: Vec<String> = detail.backdrop_url.into_iter().collect();
 		if let Some(poster) = detail.poster_url
 			&& !covers.contains(&poster)
 		{
@@ -434,43 +324,28 @@ impl AlternateCoverProvider for Silo {
 
 impl ImageRequestProvider for Silo {
 	fn get_image_request(&self, url: String, context: Option<PageContext>) -> Result<Request> {
-		let invalid =
-			|e: aidoku::imports::net::RequestError| error!("Invalid image request: {e:?}");
+		let get =
+			|url: String| Request::get(url).map_err(|e| error!("Invalid image request: {e:?}"));
 		let Some(context) = context else {
-			return Request::get(url).map_err(invalid);
+			return get(url);
 		};
-		if context.get(comic_pages::MARKER).is_some() {
+		if context.contains_key(comic_pages::MARKER) {
 			return comic_pages::image_request(&url, &context, 0);
 		}
-		#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
-		if context.get(RAR_INDEX_KEY).is_some() {
-			let total = context_u64(&context, RAR_TOTAL_KEY)
-				.ok_or_else(|| error!("Missing RAR archive length."))?;
-			if total == 0 || total > rar::MAX_ARCHIVE_BYTES {
-				bail!("RAR archive is empty or exceeds the 16 MiB limit.");
-			}
-			let end = total - 1;
-			let mut request = Request::get(url).map_err(invalid)?;
-			let range = format!("bytes=0-{end}");
-			request = request.header("Range", range.as_str());
-			return Ok(add_stored_auth(request));
-		}
 		let Some(offset) = context_u64(&context, OFF_KEY) else {
-			return Request::get(url).map_err(invalid);
+			return get(url);
 		};
-		let length = context_u64(&context, LEN_KEY).unwrap_or(0);
 		// Overfetch past the local header (name + extra fields) so the entry's
 		// data can be located without a second request.
-		let end = offset
-			.saturating_add(30)
-			.saturating_add(2048)
-			.saturating_add(length)
-			.saturating_sub(1);
-
-		let mut request = Request::get(url).map_err(invalid)?;
-		let range = format!("bytes={offset}-{end}");
-		request = request.header("Range", range.as_str());
-		Ok(add_stored_auth(request))
+		let length = context_u64(&context, LEN_KEY).unwrap_or(0);
+		let end = offset.saturating_add(30 + 2048).saturating_add(length);
+		let range = format!("bytes={offset}-{}", end - 1);
+		let client = Client::for_images();
+		// Never send this server's credentials to a URL from another server.
+		if !url.starts_with(&format!("{}/", client.base)) {
+			bail!("The Silo server URL changed. Reopen the chapter.");
+		}
+		Ok(client.authorize(get(url)?.header("Range", range.as_str())))
 	}
 }
 
@@ -487,7 +362,88 @@ impl PageImageProcessor for Silo {
 	}
 }
 
+register_source!(
+	Silo,
+	ListingProvider,
+	Home,
+	DynamicListings,
+	DynamicFilters,
+	BaseUrlProvider,
+	DeepLinkHandler,
+	BasicLoginHandler,
+	AlternateCoverProvider,
+	ImageRequestProvider,
+	PageImageProcessor
+);
+
 // ----- helpers -----
+
+/// Builds one page per archive entry. Each page URL is unique so Aidoku
+/// caches pages separately, and its context locates the entry's bytes.
+fn archive_pages<T, const N: usize>(
+	client: &Client,
+	content_id: &str,
+	file_id: &str,
+	entries: &[T],
+	fields: impl Fn(&T) -> [(&'static str, u64); N],
+) -> Vec<Page> {
+	let url = client.file_url(content_id, file_id);
+	entries
+		.iter()
+		.enumerate()
+		.map(|(index, entry)| {
+			let context = fields(entry)
+				.into_iter()
+				.map(|(key, value)| (String::from(key), format!("{value}")))
+				.collect();
+			Page {
+				content: PageContent::url_context(format!("{url}?aidoku_page={index}"), context),
+				..Default::default()
+			}
+		})
+		.collect()
+}
+
+/// Pages for a RAR archive: extracted on the server by the Comic Pages plugin
+/// when configured, otherwise decoded on the device. The device path downloads
+/// the archive once and returns every page as an image, so reading makes no
+/// further requests (Aidoku spills image pages to disk, and downloads save
+/// them as PNG).
+fn rar_pages(
+	client: &mut Client,
+	content_id: &str,
+	file_id: &str,
+	total: u64,
+) -> Result<Vec<Page>> {
+	if let Some(installation) = comic_pages::installation(client) {
+		return comic_pages::pages(client, &installation, content_id, file_id);
+	}
+	#[cfg(feature = "cbr-native")]
+	{
+		if total == 0 || total > rar::MAX_ARCHIVE_BYTES {
+			bail!("RAR archive is empty or exceeds the 16 MiB limit.");
+		}
+		let archive = client.chapter_range(content_id, file_id, 0, Some(total - 1))?;
+		if archive.data.len() as u64 != total {
+			bail!("RAR archive response was truncated.");
+		}
+		let images = rar::decode_pages(&archive.data, ImageRef::new)?;
+		Ok(images
+			.into_iter()
+			.map(|image| Page {
+				content: PageContent::image(image),
+				..Default::default()
+			})
+			.collect())
+	}
+	#[cfg(not(feature = "cbr-native"))]
+	{
+		let _ = total;
+		bail!(
+			"CBR/RAR comic archives aren't supported. Convert this file to CBZ or read it in the Silo web reader."
+		);
+	}
+}
 
 /// Reads the ZIP central directory over range requests and returns its entries.
 fn load_entries(
@@ -496,44 +452,30 @@ fn load_entries(
 	file_id: &str,
 	total: u64,
 ) -> Result<Vec<zip::Entry>> {
-	let tail_length = total.min(zip::TAIL_BYTES);
-	let tail_start = total - tail_length;
+	let tail_start = total - total.min(zip::TAIL_BYTES);
 	let tail = client.chapter_range(content_id, file_id, tail_start, None)?;
-	let base = tail.start;
 	let directory = zip::read_directory(&tail.data)?;
-	if directory.cd_offset >= base {
-		zip::parse_entries(&tail.data, base, &directory)
-	} else {
-		let directory_end = directory.cd_offset + directory.cd_size - 1;
-		let directory_data = client.chapter_range(
-			content_id,
-			file_id,
-			directory.cd_offset,
-			Some(directory_end),
-		)?;
-		zip::parse_entries(&directory_data.data, directory_data.start, &directory)
+	if directory.cd_offset >= tail.start {
+		return zip::parse_entries(&tail.data, tail.start, &directory);
 	}
+	let directory_end = (directory.cd_offset + directory.cd_size).saturating_sub(1);
+	let data = client.chapter_range(
+		content_id,
+		file_id,
+		directory.cd_offset,
+		Some(directory_end),
+	)?;
+	zip::parse_entries(&data.data, data.start, &directory)
 }
 
-/// Turns a fetched page response into the page's image bytes. A `200` means the
-/// server ignored the range and returned the whole archive.
+/// Turns a fetched CBZ or plugin page response into the page's image bytes. A
+/// `200` means the server ignored the range and returned the whole archive.
 fn decode_page(code: u16, data: &[u8], context: &PageContext) -> Result<Vec<u8>> {
-	if context.get(comic_pages::MARKER).is_some() {
+	if context.contains_key(comic_pages::MARKER) {
 		return comic_pages::decode(code, data, context);
 	}
-	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
-	if context.get(RAR_INDEX_KEY).is_some() {
-		let index =
-			context_u64(context, RAR_INDEX_KEY).ok_or_else(|| error!("Missing RAR page index."))?;
-		let total = context_u64(context, RAR_TOTAL_KEY)
-			.ok_or_else(|| error!("Missing RAR archive length."))?;
-		let size =
-			context_u64(context, RAR_SIZE_KEY).ok_or_else(|| error!("Missing RAR page size."))?;
-		return rar::decode_page(code, data, index, total, size);
-	}
-	#[cfg(not(any(feature = "cbr-native", feature = "cbr-wasm")))]
-	if context.get("silo_rar_index").is_some() {
-		bail!("RAR decoding is unavailable without a CBR feature enabled.");
+	if !matches!(code, 200 | 206) {
+		bail!("Silo returned HTTP {code} for this page. Reopen the chapter.");
 	}
 	let offset = context_u64(context, OFF_KEY).ok_or_else(|| error!("Missing page metadata."))?;
 	let length = context_u64(context, LEN_KEY).ok_or_else(|| error!("Missing page metadata."))?;
@@ -544,26 +486,6 @@ fn decode_page(code: u16, data: &[u8], context: &PageContext) -> Result<Vec<u8>>
 	} else {
 		zip::extract_local(data, method, length, size)
 	}
-}
-
-fn add_stored_auth(mut request: Request) -> Request {
-	let auth = client::ensure_image_auth();
-	let token = if settings::auth_mode() == "apiKey" {
-		settings::api_key()
-	} else {
-		auth.token.unwrap_or_default()
-	};
-	if !token.is_empty() {
-		let value = format!("Bearer {token}");
-		request = request.header("Authorization", value.as_str());
-	}
-	if !auth.profile_id.is_empty() {
-		request = request.header("X-Profile-Id", auth.profile_id.as_str());
-	}
-	if let Some(profile_token) = &auth.profile_token {
-		request = request.header("X-Profile-Token", profile_token.as_str());
-	}
-	request
 }
 
 fn context_u64(context: &PageContext, key: &str) -> Option<u64> {
@@ -580,47 +502,33 @@ fn is_rar_magic(data: &[u8]) -> bool {
 	data.starts_with(b"Rar!\x1a\x07\x00") || data.starts_with(b"Rar!\x1a\x07\x01\x00")
 }
 
+#[derive(Default)]
 struct SearchParams {
 	author: Option<String>,
 	genre: Option<String>,
 	year_from: Option<i64>,
 	year_to: Option<i64>,
-	sort: Option<(String, String)>,
+	/// A Silo sort field and whether it is descending.
+	sort: Option<(&'static str, bool)>,
 }
 
 impl SearchParams {
 	fn from_filters(filters: &[FilterValue]) -> Self {
-		let mut params = Self {
-			author: None,
-			genre: None,
-			year_from: None,
-			year_to: None,
-			sort: None,
-		};
+		let mut params = Self::default();
 		for filter in filters {
 			match filter {
-				FilterValue::Text { id, value } => {
-					if id == "author" && !value.trim().is_empty() {
-						params.author = Some(value.trim().into());
-					}
+				FilterValue::Text { id, value } if id == "author" && !value.trim().is_empty() => {
+					params.author = Some(value.trim().into());
 				}
-				FilterValue::Select { id, value } => {
-					if id == "genre" && !value.is_empty() {
-						params.genre = Some(value.clone());
-					}
+				FilterValue::Select { id, value } if id == "genre" && !value.is_empty() => {
+					params.genre = Some(value.clone());
 				}
-				FilterValue::Range { id, from, to } => {
-					if id == "year" {
-						params.year_from = from.filter(|v| *v > 0.0).map(|v| v as i64);
-						params.year_to = to.filter(|v| *v > 0.0).map(|v| v as i64);
-					}
+				FilterValue::Range { id, from, to } if id == "year" => {
+					params.year_from = from.filter(|v| *v > 0.0).map(|v| v as i64);
+					params.year_to = to.filter(|v| *v > 0.0).map(|v| v as i64);
 				}
-				FilterValue::Sort { id, index, .. } => {
-					if id == "sort"
-						&& let Some((field, order)) = SORT_FIELDS.get(*index as usize)
-					{
-						params.sort = Some((String::from(*field), String::from(*order)));
-					}
+				FilterValue::Sort { id, index, .. } if id == "sort" => {
+					params.sort = SORT_FIELDS.get(*index as usize).copied();
 				}
 				_ => {}
 			}
@@ -629,38 +537,53 @@ impl SearchParams {
 	}
 }
 
-fn add_pagination(query: &mut Query, client: &Client, page: i32) {
-	let offset = (page.max(1) - 1) as i64 * PAGE_SIZE as i64;
+/// Adds a sort in the API's grammar: v2 takes `-field` for descending and
+/// has no `order` parameter; v1 takes `sort` plus `order`.
+fn add_sort(query: &mut Query, client: &Client, field: &str, descending: bool) {
 	if client.is_v2 {
-		query.add_i64("seek", offset);
+		query.add(
+			"sort",
+			&format!("{}{field}", if descending { "-" } else { "" }),
+		);
 	} else {
-		query.add_i64("offset", offset);
+		query.add("sort", field);
+		query.add("order", if descending { "desc" } else { "asc" });
 	}
 }
 
-fn build_catalog_query(
-	client: &mut Client,
-	page: i32,
-	search: Option<&str>,
-	params: &SearchParams,
-	library_id: Option<&str>,
-) -> Query {
-	let mut query = Query::new();
-	query.add("type", "manga");
-	query.add_i64("limit", PAGE_SIZE as i64);
-	query.add("image_size", &client.image_size);
-	if let Some(id) = library_id {
-		query.add("library_id", id);
-	}
-	if let Some(search) = search.filter(|s| !s.trim().is_empty()) {
-		query.add("source", "query");
-		query.add("q", search.trim());
-	}
-	if let Some(author) = &params.author {
+/// Adds an `author is <name>` rule: v2 takes the rule groups as one JSON
+/// query value, v1 takes them as bracketed keys.
+fn add_author(query: &mut Query, client: &Client, author: &str) {
+	if client.is_v2 {
+		let groups = serde_json::json!([{
+			"match": "all",
+			"rules": [{ "field": "author", "op": "is", "value": author }],
+		}]);
+		query.add("groups", &format!("{groups}"));
+	} else {
 		query.add("groups[0][match]", "all");
 		query.add("groups[0][rules][0][field]", "author");
 		query.add("groups[0][rules][0][op]", "is");
 		query.add("groups[0][rules][0][value]", author);
+	}
+}
+
+fn add_pagination(query: &mut Query, client: &Client, page: i32) {
+	let offset = (page.max(1) - 1) as i64 * PAGE_SIZE as i64;
+	query.add_i64(if client.is_v2 { "seek" } else { "offset" }, offset);
+}
+
+fn search_query(client: &Client, page: i32, search: Option<&str>, params: &SearchParams) -> Query {
+	let mut query = Query::new();
+	query.add("type", "manga");
+	query.add_i64("limit", PAGE_SIZE as i64);
+	query.add("image_size", &client.image_size);
+	let search = search.map(str::trim).filter(|s| !s.is_empty());
+	if let Some(search) = search {
+		query.add("q", search);
+	}
+	if let Some(author) = &params.author {
+		add_author(&mut query, client, author);
 	}
 	if let Some(genre) = &params.genre {
 		query.add("genre", genre);
@@ -671,60 +594,33 @@ fn build_catalog_query(
 	if let Some(year) = params.year_to {
 		query.add_i64("year_max", year);
 	}
-	match &params.sort {
-		Some((field, order)) => {
-			query.add("sort", field);
-			query.add("order", order);
-		}
-		None => {
-			if search.is_some() {
-				query.add("sort", "relevance");
-			} else {
-				query.add("sort", "added_at");
-				query.add("order", "desc");
-			}
-		}
+	// Without an explicit sort, a search keeps the server's relevance order.
+	match params.sort {
+		Some((field, descending)) => add_sort(&mut query, client, field, descending),
+		None if search.is_none() => add_sort(&mut query, client, "added_at", true),
+		None => {}
 	}
 	add_pagination(&mut query, client, page);
 	query
 }
 
-fn add_section_components(
-	components: &mut Vec<HomeComponent>,
-	response: &SectionResponse,
-	library: &models::Library,
-) {
-	let listing = Some(Listing {
+fn library_listing(library: &Library) -> Listing {
+	Listing {
 		id: format!("library:{}", library.id.as_string()),
 		name: library.name.clone(),
 		kind: ListingKind::List,
-	});
-	for section in response.sections.iter().take(6) {
-		let entries: Vec<Link> = section
-			.items
-			.iter()
-			.map(|item| item_to_manga(item).into())
-			.collect();
-		if entries.is_empty() {
-			continue;
-		}
-		components.push(HomeComponent {
-			title: Some(section.title.clone()),
-			subtitle: None,
-			value: HomeComponentValue::Scroller {
-				entries,
-				listing: listing.clone(),
-			},
-		});
 	}
 }
 
 fn to_page_result(response: CatalogResponse) -> MangaPageResult {
-	let has_next_page = response.has_next_page();
 	MangaPageResult {
+		has_next_page: response.has_next_page(),
 		entries: response.items.iter().map(item_to_manga).collect(),
-		has_next_page,
 	}
+}
+
+fn tags(genres: &[String]) -> Option<Vec<String>> {
+	(!genres.is_empty()).then(|| genres.to_vec())
 }
 
 fn item_to_manga(item: &Item) -> Manga {
@@ -733,12 +629,8 @@ fn item_to_manga(item: &Item) -> Manga {
 		title: item.title.clone(),
 		cover: item.poster_url.clone(),
 		description: item.overview.clone().filter(|text| !text.is_empty()),
-		tags: if item.genres.is_empty() {
-			None
-		} else {
-			Some(item.genres.clone())
-		},
-		status: status_from(item.show_status.as_deref().unwrap_or("")),
+		tags: tags(&item.genres),
+		status: status_from(item.show_status.as_deref()),
 		..Default::default()
 	}
 }
@@ -769,12 +661,8 @@ fn detail_to_manga(detail: &ItemDetail, base: &str) -> Manga {
 		authors: (!authors.is_empty()).then_some(authors),
 		description: detail.overview.clone().filter(|text| !text.is_empty()),
 		url: Some(format!("{base}/item/{}", detail.content_id)),
-		tags: if detail.genres.is_empty() {
-			None
-		} else {
-			Some(detail.genres.clone())
-		},
-		status: status_from(detail.show_status.as_deref().unwrap_or("")),
+		tags: tags(&detail.genres),
+		status: status_from(detail.show_status.as_deref()),
 		..Default::default()
 	}
 }
@@ -784,29 +672,28 @@ fn chapter_to_aidoku(chapter: &MangaChapter) -> Chapter {
 		key: chapter.content_id.clone(),
 		title: Some(chapter.title.clone()).filter(|title| !title.is_empty()),
 		chapter_number: chapter.chapter_index.map(|value| value as f32),
-		volume_number: parse_volume(&chapter.volume),
+		volume_number: chapter.volume.as_deref().and_then(parse_volume),
 		thumbnail: chapter.poster_url.clone(),
 		..Default::default()
 	}
 }
 
-fn parse_volume(volume: &Option<String>) -> Option<f32> {
-	let volume = volume.as_ref()?;
-	let mut digits = String::new();
-	let mut started = false;
-	for character in volume.chars() {
-		if character.is_ascii_digit() {
-			started = true;
-			digits.push(character);
-		} else if started {
-			break;
-		}
-	}
-	digits.parse::<f32>().ok()
+/// The first run of digits in a volume label (`"Vol. 3"` is `3`).
+fn parse_volume(volume: &str) -> Option<f32> {
+	let start = volume.find(|c: char| c.is_ascii_digit())?;
+	let digits = &volume[start..];
+	let end = digits
+		.find(|c: char| !c.is_ascii_digit())
+		.unwrap_or(digits.len());
+	digits[..end].parse().ok()
 }
 
-fn status_from(show_status: &str) -> MangaStatus {
-	match show_status.to_ascii_lowercase().as_str() {
+fn status_from(show_status: Option<&str>) -> MangaStatus {
+	match show_status
+		.unwrap_or_default()
+		.to_ascii_lowercase()
+		.as_str()
+	{
 		"ongoing" | "continuing" | "returning series" | "in production" => MangaStatus::Ongoing,
 		"completed" | "complete" | "ended" | "finished" | "released" => MangaStatus::Completed,
 		"cancelled" | "canceled" | "canceled/ended" => MangaStatus::Cancelled,
@@ -814,19 +701,6 @@ fn status_from(show_status: &str) -> MangaStatus {
 		_ => MangaStatus::Unknown,
 	}
 }
-
-register_source!(
-	Silo,
-	ListingProvider,
-	Home,
-	DynamicListings,
-	DynamicFilters,
-	DeepLinkHandler,
-	BasicLoginHandler,
-	AlternateCoverProvider,
-	ImageRequestProvider,
-	PageImageProcessor
-);
 
 #[cfg(test)]
 mod test {
@@ -840,10 +714,7 @@ mod test {
 			DefaultValue::String(String::from("https://juniper.nightbyte.cc")),
 		);
 		defaults_set("apiVersion", DefaultValue::String(String::from("auto")));
-		defaults_set(
-			"authMode",
-			DefaultValue::String(String::from("credentials")),
-		);
+		defaults_set("useApiKey", DefaultValue::Bool(false));
 		defaults_set(
 			"credentials.username",
 			DefaultValue::String(String::from("test")),
@@ -920,7 +791,7 @@ mod test {
 	}
 
 	#[aidoku_test]
-	fn test_zip_natural_order_and_filtering() {
+	fn test_unit_zip_natural_order_and_filtering() {
 		let archive = stored_zip(&[
 			("__MACOSX/._page1.png", b"junk"),
 			("page10.png", b"ten"),
@@ -953,7 +824,7 @@ mod test {
 	}
 
 	#[aidoku_test]
-	fn test_zip_deflate_entry() {
+	fn test_unit_zip_deflate_entry() {
 		let mut archive = Vec::new();
 		let payload = b"a deflated page image payload";
 		let compressed = miniz_oxide::deflate::compress_to_vec(payload, 6);
@@ -1016,7 +887,7 @@ mod test {
 	}
 
 	#[aidoku_test]
-	fn test_natural_cmp() {
+	fn test_unit_natural_cmp() {
 		use core::cmp::Ordering;
 		assert_eq!(zip::natural_cmp("page2.png", "page10.png"), Ordering::Less);
 		assert_eq!(zip::natural_cmp("002-003.webp", "004.webp"), Ordering::Less);
@@ -1024,7 +895,7 @@ mod test {
 	}
 
 	#[aidoku_test]
-	fn test_magic_detection() {
+	fn test_unit_magic_detection() {
 		assert!(is_zip_magic(&[0x50, 0x4b, 0x03, 0x04, 0, 0]));
 		assert!(is_zip_magic(&[0x50, 0x4b, 0x05, 0x06]));
 		assert!(is_rar_magic(b"Rar!\x1a\x07\x00xxxx"));
@@ -1034,40 +905,53 @@ mod test {
 		assert!(!is_zip_magic(b"%PDF-1.7"));
 	}
 
-	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+	#[cfg(feature = "cbr-native")]
 	fn rar_fixture(which: usize) -> &'static [u8] {
 		let fixtures: [&[u8]; 4] = [
 			include_bytes!(concat!(
 				env!("CARGO_MANIFEST_DIR"),
-				"/../../experiments/cbr-wasm/fixtures/rar40-normal.cbr"
+				"/../../crates/cbr-native/fixtures/rar40-normal.cbr"
 			))
 			.as_slice(),
 			include_bytes!(concat!(
 				env!("CARGO_MANIFEST_DIR"),
-				"/../../experiments/cbr-wasm/fixtures/rar40-solid.cbr"
+				"/../../crates/cbr-native/fixtures/rar40-solid.cbr"
 			))
 			.as_slice(),
 			include_bytes!(concat!(
 				env!("CARGO_MANIFEST_DIR"),
-				"/../../experiments/cbr-wasm/fixtures/rar50-normal.cbr"
+				"/../../crates/cbr-native/fixtures/rar50-normal.cbr"
 			))
 			.as_slice(),
 			include_bytes!(concat!(
 				env!("CARGO_MANIFEST_DIR"),
-				"/../../experiments/cbr-wasm/fixtures/rar50-solid.cbr"
+				"/../../crates/cbr-native/fixtures/rar50-solid.cbr"
 			))
 			.as_slice(),
 		];
 		fixtures[which]
 	}
 
-	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+	#[cfg(feature = "cbr-native")]
 	#[aidoku_test]
-	fn test_rar_fixtures_and_resource_guards() {
-		let expected = include_bytes!(concat!(
-			env!("CARGO_MANIFEST_DIR"),
-			"/../../experiments/cbr-wasm/fixtures/page1.png"
-		));
+	fn test_unit_rar_fixtures_and_resource_guards() {
+		let page = |name: &str| match name {
+			"page1" => include_bytes!(concat!(
+				env!("CARGO_MANIFEST_DIR"),
+				"/../../crates/cbr-native/fixtures/page1.png"
+			))
+			.as_slice(),
+			"page2" => include_bytes!(concat!(
+				env!("CARGO_MANIFEST_DIR"),
+				"/../../crates/cbr-native/fixtures/page2.png"
+			))
+			.as_slice(),
+			_ => include_bytes!(concat!(
+				env!("CARGO_MANIFEST_DIR"),
+				"/../../crates/cbr-native/fixtures/page10.png"
+			))
+			.as_slice(),
+		};
 		for which in 0..4 {
 			let archive = rar_fixture(which);
 			let pages = rar::list_pages(archive).unwrap();
@@ -1076,71 +960,22 @@ mod test {
 					.iter()
 					.map(|page| page.name.as_str())
 					.collect::<Vec<_>>(),
-				["page1.png", "page2.png", "page10.png",]
+				["page1.png", "page2.png", "page10.png"]
 			);
 			assert_eq!(
 				pages.iter().map(|page| page.index).collect::<Vec<_>>(),
 				[2, 1, 0]
 			);
-			for code in [200, 206] {
-				let decoded = rar::decode_page(
-					code,
-					archive,
-					pages[0].index as u64,
-					archive.len() as u64,
-					pages[0].size,
-				)
-				.unwrap();
-				assert_eq!(decoded.as_slice(), expected.as_slice());
-			}
+			// One pass decodes every page, returned in reading order.
+			let decoded = rar::decode_pages(archive, <[u8]>::to_vec).unwrap();
+			assert_eq!(decoded, [page("page1"), page("page2"), page("page10")]);
 		}
 
 		let archive = rar_fixture(0);
 		assert!(rar::list_pages(&archive[..archive.len() / 2]).is_err());
-		assert!(rar::extract_member(archive, 99).is_err());
-		assert!(rar::decode_page(500, archive, 2, archive.len() as u64, 49_348).is_err());
-		assert!(
-			rar::decode_page(
-				206,
-				&archive[..archive.len() - 1],
-				2,
-				archive.len() as u64,
-				49_348
-			)
-			.is_err()
-		);
+		assert!(rar::decode_pages(&archive[..archive.len() - 1], <[u8]>::to_vec).is_err());
 		let oversized = vec![0; rar::MAX_ARCHIVE_BYTES as usize + 1];
 		assert!(rar::list_pages(&oversized).is_err());
-	}
-
-	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
-	#[aidoku_test]
-	fn test_rar_page_image_processor_rejects_malformed_response() {
-		let archive = rar_fixture(2);
-		let expected = include_bytes!(concat!(
-			env!("CARGO_MANIFEST_DIR"),
-			"/../../experiments/cbr-wasm/fixtures/page1.png"
-		));
-		let mut context = PageContext::new();
-		context.insert(String::from(RAR_INDEX_KEY), String::from("0"));
-		context.insert(String::from(RAR_TOTAL_KEY), format!("{}", archive.len()));
-		context.insert(String::from(RAR_SIZE_KEY), format!("{}", expected.len()));
-
-		for code in [200, 206] {
-			let result = Silo::new().process_page_image(
-				ImageResponse {
-					code,
-					headers: Default::default(),
-					request: aidoku::ImageRequest {
-						url: None,
-						headers: Default::default(),
-					},
-					image: ImageRef::new(expected),
-				},
-				Some(context.clone()),
-			);
-			assert!(result.is_err());
-		}
 	}
 
 	// ---- Live server tests against the Silo test instance ----
@@ -1193,7 +1028,8 @@ mod test {
 		let fetched = client
 			.chapter_range(chapter_key, &file_id, offset, None)
 			.unwrap();
-		decode_page(fetched.status as u16, &fetched.data, &context).unwrap()
+		let code = if fetched.start == offset { 206 } else { 200 };
+		decode_page(code, &fetched.data, &context).unwrap()
 	}
 
 	#[aidoku_test]
@@ -1354,10 +1190,11 @@ mod test {
 			DefaultValue::String(String::from("http://127.0.0.1:8799")),
 		);
 		defaults_set("apiVersion", DefaultValue::String(String::from("v2")));
-		defaults_set(
-			"authMode",
-			DefaultValue::String(String::from("credentials")),
-		);
+		defaults_set("useApiKey", DefaultValue::Bool(false));
+		defaults_set("useComicPages", DefaultValue::Bool(true));
+		for key in ["apiKey", "profile", "pin", "comicPagesPlugin"] {
+			defaults_set(key, DefaultValue::String(String::new()));
+		}
 		defaults_set(
 			"credentials.username",
 			DefaultValue::String(String::from("mock")),
@@ -1370,23 +1207,18 @@ mod test {
 		defaults_set("markReadOnOpen", DefaultValue::Bool(false));
 	}
 
-	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
 	fn configure_v2_api_key_mock() {
 		configure_v2_mock();
-		defaults_set("authMode", DefaultValue::String(String::from("apiKey")));
+		defaults_set("useApiKey", DefaultValue::Bool(true));
 		defaults_set("apiKey", DefaultValue::String(String::from("mock-api-key")));
-		defaults_set(
-			"accessToken",
-			DefaultValue::String(String::from("stale-access-token")),
-		);
 	}
 
 	/// Exercises the v2 code paths (envelopes, string file ids, `seek`
-	/// pagination) against `tests/mock_silo_v2.py`. Run with:
-	/// `python3 tests/mock_silo_v2.py & cargo test -- --ignored`
+	/// pagination, sort and rule grammar) against `tests/mock_silo_v2.py`.
+	/// Run with: `python3 tests/mock_silo_v2.py & cargo test -- --ignored test_mock_`
 	#[aidoku_test]
 	#[ignore]
-	fn test_v2_against_mock() {
+	fn test_mock_v2_browse_and_cbz() {
 		configure_v2_mock();
 		let source = Silo::new();
 
@@ -1401,6 +1233,47 @@ mod test {
 		let page_two = source.get_search_manga_list(None, 2, Vec::new()).unwrap();
 		assert_eq!(page_two.entries.len(), 1);
 		assert!(!page_two.has_next_page);
+
+		// Descending sorts use v2's `-field` grammar; the mock rejects `order`.
+		let sort = |index| FilterValue::Sort {
+			id: String::from("sort"),
+			index,
+			ascending: false,
+		};
+		let z_to_a = source
+			.get_search_manga_list(None, 1, vec![sort(1)])
+			.unwrap();
+		assert_eq!(z_to_a.entries[0].title, "Mock Manga Two");
+		let searched = source
+			.get_search_manga_list(Some(String::from("mock")), 1, Vec::new())
+			.unwrap();
+		assert_eq!(searched.entries.len(), 2);
+
+		// The author rule travels as v2's JSON `groups` value.
+		let by_author = source
+			.get_search_manga_list(
+				None,
+				1,
+				vec![FilterValue::Text {
+					id: String::from("author"),
+					value: String::from("Mock Author"),
+				}],
+			)
+			.unwrap();
+		assert_eq!(by_author.entries.len(), 1);
+
+		// Home sections link to their own items.
+		let home = source.get_home().unwrap();
+		let section = home
+			.components
+			.iter()
+			.find_map(|component| match &component.value {
+				HomeComponentValue::Scroller { listing, .. } => listing.clone(),
+				_ => None,
+			})
+			.unwrap();
+		assert_eq!(section.id, "section:12:recent");
+		assert_eq!(source.get_manga_list(section, 1).unwrap().entries.len(), 1);
 
 		let manga = source
 			.get_manga_update(page_one.entries[0].clone(), true, true)
@@ -1418,13 +1291,13 @@ mod test {
 		assert!(!decode_first_page("c1").is_empty());
 	}
 
-	#[cfg(any(feature = "cbr-native", feature = "cbr-wasm"))]
+	#[cfg(feature = "cbr-native")]
 	#[aidoku_test]
 	#[ignore]
-	fn test_v2_rar_api_key_image_request_and_decode() {
+	fn test_mock_rar_pages_are_decoded_images() {
 		configure_v2_api_key_mock();
-		let source = Silo::new();
-		let pages = source
+		defaults_set("useComicPages", DefaultValue::Bool(false));
+		let pages = Silo::new()
 			.get_page_list(
 				Manga::default(),
 				Chapter {
@@ -1434,58 +1307,18 @@ mod test {
 			)
 			.unwrap();
 		assert_eq!(pages.len(), 3);
-		let contexts: Vec<PageContext> = pages
-			.iter()
-			.map(|page| match &page.content {
-				PageContent::Url(_, Some(context)) => context.clone(),
-				_ => panic!("expected a RAR URL page with context"),
-			})
-			.collect();
-		assert_eq!(
-			contexts
+		assert!(
+			pages
 				.iter()
-				.map(|context| context_u64(context, RAR_INDEX_KEY).unwrap())
-				.collect::<Vec<_>>(),
-			[2, 1, 0]
+				.all(|page| matches!(page.content, PageContent::Image(_)))
 		);
-
-		let (url, context) = match &pages[0].content {
-			PageContent::Url(url, Some(context)) => (url.clone(), context.clone()),
-			_ => panic!("expected a RAR URL page with context"),
-		};
-		for (url, expected_status) in [(url.clone(), 206), (format!("{url}&full=1"), 200)] {
-			let response = source
-				.get_image_request(url, Some(context.clone()))
-				.unwrap()
-				.send()
-				.unwrap();
-			assert_eq!(response.status_code(), expected_status);
-			let data = response.get_data().unwrap();
-			let decoded = decode_page(response.status_code() as u16, &data, &context).unwrap();
-			assert_eq!(
-				decoded.as_slice(),
-				include_bytes!(concat!(
-					env!("CARGO_MANIFEST_DIR"),
-					"/../../experiments/cbr-wasm/fixtures/page1.png"
-				))
-			);
-		}
 	}
 
 	#[aidoku_test]
 	#[ignore]
-	fn test_comic_pages_plugin_chunks_and_credentials() {
-		configure_v2_mock();
-		defaults_set("authMode", DefaultValue::String(String::from("apiKey")));
-		defaults_set("apiKey", DefaultValue::String(String::from("mock-api-key")));
-		defaults_set(
-			"accessToken",
-			DefaultValue::String(String::from("stale-token")),
-		);
-		defaults_set(
-			"comicPagesPlugin",
-			DefaultValue::String(String::from("comic-test")),
-		);
+	fn test_mock_comic_pages_plugin_chunks_and_credentials() {
+		// No installation ID: the source finds the plugin in Silo's list.
+		configure_v2_api_key_mock();
 		let source = Silo::new();
 		let pages = source
 			.get_page_list(
@@ -1541,5 +1374,131 @@ mod test {
 				.get_image_request(url.clone(), Some(context.clone()))
 				.is_err()
 		);
+	}
+
+	#[aidoku_test]
+	fn test_unit_query_grammar() {
+		let params = SearchParams {
+			sort: Some(("added_at", true)),
+			author: Some(String::from("Jo")),
+			..Default::default()
+		};
+		let v2 = search_query(&Client::new(String::new(), true), 2, None, &params).encode();
+		assert!(v2.contains("sort=-added_at"));
+		assert!(!v2.contains("order="));
+		assert!(v2.contains("groups=%5B%7B"));
+		assert!(v2.contains("seek=30"));
+		let v1 = search_query(&Client::new(String::new(), false), 1, None, &params).encode();
+		assert!(v1.contains("sort=added_at&order=desc"));
+		assert!(v1.contains("groups[0][rules][0][value]=Jo"));
+		// A search without an explicit sort keeps the server's relevance order.
+		let search = search_query(
+			&Client::new(String::new(), true),
+			1,
+			Some(" mock "),
+			&SearchParams::default(),
+		)
+		.encode();
+		assert!(search.contains("q=mock"));
+		assert!(!search.contains("sort="));
+		let blank = search_query(
+			&Client::new(String::new(), true),
+			1,
+			Some("  "),
+			&SearchParams::default(),
+		)
+		.encode();
+		assert!(!blank.contains("q=") && blank.contains("sort=-added_at"));
+	}
+
+	#[aidoku_test]
+	fn test_unit_parsers() {
+		assert_eq!(
+			client::parse_utc("2026-01-02T15:04:05.000Z"),
+			Some(1_767_366_245)
+		);
+		assert_eq!(client::parse_utc("1970-01-01T00:00:00Z"), Some(0));
+		assert_eq!(client::parse_utc("garbage"), None);
+		assert_eq!(parse_volume("Vol. 12 part 3"), Some(12.0));
+		assert_eq!(parse_volume("Special"), None);
+		let link = |url: &str| Silo::new().handle_deep_link(String::from(url)).unwrap();
+		assert!(matches!(
+			link("https://silo.test/item/42?x=1"),
+			Some(DeepLinkResult::Manga { key }) if key == "42"
+		));
+		assert!(matches!(
+			link("https://silo.test/library/7"),
+			Some(DeepLinkResult::Listing(Listing { id, .. })) if id == "library:7"
+		));
+		assert!(link("https://silo.test/settings").is_none());
+	}
+
+	#[aidoku_test]
+	fn test_unit_auth_mode_migration() {
+		defaults_set("useApiKey", DefaultValue::Bool(false));
+		defaults_set("authMode", DefaultValue::String(String::from("apiKey")));
+		assert!(settings::use_api_key());
+		// The legacy value is consumed, so the switch wins afterwards.
+		defaults_set("useApiKey", DefaultValue::Bool(false));
+		assert!(!settings::use_api_key());
+	}
+
+	/// A rejected API key must fail after one retry instead of recursing
+	/// through re-authentication until the stack overflows.
+	#[aidoku_test]
+	#[ignore]
+	fn test_mock_invalid_api_key_fails_fast() {
+		configure_v2_api_key_mock();
+		defaults_set("apiKey", DefaultValue::String(String::from("bad-key")));
+		let error = Client::connect().err().expect("a bad key must not connect");
+		assert!(format!("{error:?}").contains("(401)"));
+	}
+
+	#[aidoku_test]
+	#[ignore]
+	fn test_mock_login_keeps_session_and_scopes_it() {
+		configure_v2_mock();
+		let source = Silo::new();
+		let login = |password: &str| {
+			source.handle_basic_login(
+				String::from("credentials"),
+				String::from("mock"),
+				String::from(password),
+			)
+		};
+		assert!(!login("wrong").unwrap());
+		assert!(login("mock").unwrap());
+		assert_eq!(
+			aidoku::imports::defaults::defaults_get::<String>("accessToken").as_deref(),
+			Some("acc")
+		);
+		// Another account must not reuse this session.
+		defaults_set(
+			"credentials.username",
+			DefaultValue::String(String::from("someone-else")),
+		);
+		assert!(Client::connect().is_err());
+		assert_eq!(
+			aidoku::imports::defaults::defaults_get::<String>("accessToken").as_deref(),
+			Some("")
+		);
+	}
+
+	#[aidoku_test]
+	#[ignore]
+	fn test_mock_pin_profile() {
+		configure_v2_mock();
+		defaults_set("profile", DefaultValue::String(String::from("Locked")));
+		defaults_set("pin", DefaultValue::String(String::from("0000")));
+		assert!(Client::connect().is_err());
+		defaults_set("pin", DefaultValue::String(String::from("1234")));
+		let client = Client::connect().unwrap();
+		assert_eq!(client.profile_id, "p2");
+		assert_eq!(client.profile_token.as_deref(), Some("pvt"));
+		// Page image requests reuse the verified profile.
+		let images = Client::for_images();
+		assert_eq!(images.profile_token.as_deref(), Some("pvt"));
+		let listings = Silo::new().get_dynamic_listings().unwrap();
+		assert!(listings.iter().any(|listing| listing.id == "library:12"));
 	}
 }

@@ -9,7 +9,7 @@ The question was whether a small Rust RAR container and decompression core could
 replace the isolated std-enabled guest. **Yes:** the usable direct `no_std` core is
 [`compcol 0.6.11`](https://crates.io/crates/compcol/0.6.11), but it decodes
 member streams only and does not parse RAR containers. It is now usable through
-the new [`silo-cbr-native` container parser](../../experiments/cbr-native/README.md).
+the new [`silo-cbr-native` container parser](../../crates/cbr-native/README.md).
 The `cbr-native` source feature lists and extracts the real RAR4/RAR5 fixtures,
 including solid archives. The [combined report](cbr-feasibility.md) records
 source package sizes, pinned-Wasm3 measurements and remaining limitations.

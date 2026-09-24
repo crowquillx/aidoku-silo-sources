@@ -71,7 +71,7 @@ identify the actual compiled payloads.
 
 ## Preferred native implementation
 
-[`experiments/cbr-native`](../../experiments/cbr-native/README.md) owns the
+[`experiments/cbr-native`](../../crates/cbr-native/README.md) owns the
 container parser and a small `list_members` / `extract_member` API. Its sole
 normal dependency is [compcol 0.6.11](https://docs.rs/compcol/0.6.11/compcol/),
 whose [manifest and source](https://github.com/KarpelesLab/compcol/tree/v0.6.11)
@@ -266,10 +266,10 @@ helper disables default Cargo features when building either comparison
 package. If both features are enabled in Cargo, the native adapter takes
 precedence. Build with `--no-default-features` for the CBZ-only comparison.
 
-[Native instructions](../../experiments/cbr-native/README.md),
+[Native instructions](../../crates/cbr-native/README.md),
 [nested instructions](../../experiments/cbr-wasm/README.md) and the
 [engine harness](../../experiments/cbr-native-runner/README.md) give exact
-commands. [Fixtures](../../experiments/cbr-wasm/fixtures/README.md) contain our
+commands. [Fixtures](../../crates/cbr-native/fixtures/README.md) contain our
 own generated PNGs written to RAR by rars 0.9.4, with all extracted bytes
 independently verified by node-unrar-js 2.0.2. No proprietary comic sample or
 proprietary RAR writer was needed. Small files and hashes are included; larger

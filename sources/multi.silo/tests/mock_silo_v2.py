@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""A tiny mock of the Silo v2 API used by the ignored `test_v2_against_mock`
-test. It mirrors the shapes in silo-server/contracts/api/v2/fixtures so the
-source's v2 code paths (envelopes, string file ids, `seek` pagination) can be
-exercised without a running v2 server.
+"""A tiny mock of the Silo v2 API used by the ignored `test_mock_*` tests. It
+mirrors silo-server/contracts/api/v2/openapi.json closely enough to catch
+contract drift: every authenticated route checks the bearer and profile
+headers, and `/catalog` rejects v1 query grammar (`order`, bracketed `groups`)
+with a 422.
 
 Usage:
     python3 tests/mock_silo_v2.py [port]
-    cargo test -- --ignored
+    cargo test -- --ignored test_mock_
 """
 import io
 import json
@@ -51,7 +52,7 @@ def build_cbz():
 CBZ = build_cbz()
 RAR = (
     Path(__file__).resolve().parents[3]
-    / "experiments/cbr-wasm/fixtures/rar40-normal.cbr"
+    / "crates/cbr-native/fixtures/rar40-normal.cbr"
 ).read_bytes()
 
 
@@ -67,6 +68,15 @@ def large_plugin_image():
 PLUGIN_IMAGE = large_plugin_image()
 PLUGIN_KEY = 'a' * 64
 PLUGIN_POLLS = 0
+
+TOKENS = ("Bearer acc", "Bearer acc2", "Bearer mock-api-key")
+PROFILES = [
+    {"id": "p1", "name": "Main", "has_pin": False, "is_primary": True},
+    {"id": "p2", "name": "Locked", "has_pin": True, "is_primary": False},
+]
+PIN = "1234"
+PROFILE_TOKEN = "pvt"
+SORT_FIELDS = {"title", "added_at", "release_date", "rating_imdb", "author"}
 
 LIBRARIES = {
     "items": [
@@ -195,36 +205,68 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def _authorized_archive_request(self):
-        if self.headers.get("Authorization") not in (
-            "Bearer acc",
-            "Bearer acc2",
-            "Bearer mock-api-key",
-        ):
-            self.send_response(401)
-            self.end_headers()
+    def _problem(self, status, kind):
+        self._json({"type": kind, "title": kind, "status": status}, status)
+
+    def _authorized(self, needs_profile=True):
+        """Checks the bearer, then the declared profile and its PIN proof."""
+        if self.headers.get("Authorization") not in TOKENS:
+            self._problem(401, "invalid_token")
             return False
-        if self.headers.get("X-Profile-Id") != "p1":
-            self.send_response(401)
-            self.end_headers()
+        if not needs_profile:
+            return True
+        profile = self.headers.get("X-Profile-Id")
+        if profile not in ("p1", "p2"):
+            self._problem(403, "permission_denied")
+            return False
+        if profile == "p2" and self.headers.get("X-Profile-Token") != PROFILE_TOKEN:
+            self._problem(403, "profile_verification_required")
             return False
         return True
+
+    def _catalog(self, query):
+        """Validates the v2 browse grammar and answers from the fixtures."""
+        if "order" in query or any(key.startswith("groups[") for key in query):
+            return self._problem(422, "validation_failed")
+        sort = query.get("sort", [""])[0]
+        if sort and sort.lstrip("-") not in SORT_FIELDS:
+            return self._problem(422, "invalid_sort_field")
+        if query.get("source") == ["section"]:
+            if query.get("section_id") != ["recent"] or query.get("library_id") != ["12"]:
+                return self._problem(422, "validation_failed")
+            return self._json(CATALOG_SECOND)
+        if "groups" in query:
+            rule = json.loads(query["groups"][0])[0]["rules"][0]
+            if (rule["field"], rule["op"]) != ("author", "is"):
+                return self._problem(422, "validation_failed")
+            items = CATALOG["items"][:1] if rule["value"] == "Mock Author" else []
+            return self._json({"page": {"has_more": False}, "items": items, "total": len(items)})
+        seek = int(query.get("seek", ["0"])[0])
+        response = dict(CATALOG_SECOND if seek > 0 else CATALOG)
+        if sort.startswith("-"):
+            response["items"] = list(reversed(response["items"]))
+        return self._json(response)
 
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/api/v2/system/info":
             return self._json({"server_version": "mock", "api_major": 2})
+        if not self._authorized(needs_profile=path != "/api/v2/profiles"):
+            return
         if path == "/api/v2/profiles":
-            return self._json(
-                {"items": [{"id": "p1", "name": "Main", "has_pin": False, "is_primary": True}]}
-            )
+            return self._json({"items": PROFILES})
+        if path == "/api/v2/settings/plugins":
+            return self._json({"items": [{
+                "id": "comic-test",
+                "plugin_id": "dev.crowquillx.comic-pages",
+                "version": "0.2.0",
+                "routes": [], "assets": [], "user_config_schema": [],
+            }]})
         if path == "/api/v2/user/libraries":
             return self._json(LIBRARIES)
         if path == "/api/v2/catalog":
-            query = parse_qs(parsed.query)
-            seek = int(query.get("seek", ["0"])[0])
-            return self._json(CATALOG_SECOND if seek > 0 else CATALOG)
+            return self._catalog(parse_qs(parsed.query))
         if path == "/api/v2/catalog/filters":
             return self._json({"genres": ["Action", "Adventure"], "authors": ["Mock Author"]})
         if path == "/api/v2/library/12/sections":
@@ -248,27 +290,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(RAR_CHAPTER)
             return self._json(DETAIL)
         if path.startswith("/api/v2/ebooks/") and path.endswith("/read"):
-            if not self._authorized_archive_request():
-                return
             payload = RAR if "/cbr1/" in path else CBZ
             full = parse_qs(parsed.query).get("full") == ["1"]
             return self._range_bytes(payload, force_full=full)
         return self._json({"type": "about:blank", "title": "not found", "status": 404}, 404)
-
-    def do_HEAD(self):
-        path = urlparse(self.path).path
-        if path.startswith("/api/v2/ebooks/") and path.endswith("/read"):
-            if not self._authorized_archive_request():
-                return
-            payload = RAR if "/cbr1/" in path else CBZ
-            self.send_response(200)
-            self.send_header("Content-Type", archive_content_type(payload))
-            self.send_header("Accept-Ranges", "bytes")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            return
-        self.send_response(200)
-        self.end_headers()
 
     def _range_bytes(self, payload, force_full=False):
         """Serves `payload` honoring a single `bytes=start-end` Range header."""
@@ -294,10 +319,33 @@ class Handler(BaseHTTPRequestHandler):
         global PLUGIN_POLLS
         path = urlparse(self.path).path
         plugin_base = '/api/v2/plugin-content/plugins/comic-test/v1'
-        if path.startswith(plugin_base + '/'):
-            if not self._authorized_archive_request():
+        length = int(self.headers.get('Content-Length', 0))
+        if path == "/api/v2/auth/login":
+            body = json.loads(self.rfile.read(length))
+            if (body.get("username"), body.get("password")) != ("mock", "mock"):
+                return self._problem(401, "invalid_credentials")
+            return self._json(
+                {
+                    "access_token": "acc",
+                    "refresh_token": "ref",
+                    "expires_in": 3600,
+                    "user": {"id": "1", "username": "mock", "role": "user", "permissions": []},
+                }
+            )
+        if path == "/api/v2/auth/refresh":
+            return self._json({"access_token": "acc2", "refresh_token": "ref2", "expires_in": 3600})
+        if path.startswith("/api/v2/profiles/") and path.endswith("/verify-pin"):
+            if not self._authorized(needs_profile=False):
                 return
-            body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))))
+            body = json.loads(self.rfile.read(length))
+            if body.get("pin") != PIN:
+                return self._json({"valid": False, "expires_at": None})
+            return self._json({"valid": True, "profile_token": PROFILE_TOKEN,
+                               "expires_at": "2099-01-02T15:04:05.000Z"})
+        if not self._authorized():
+            return
+        if path.startswith(plugin_base + '/'):
+            body = json.loads(self.rfile.read(length))
             expected = {'token': 'mock-api-key', 'profile_id': 'p1',
                         'content_id': 'cbr1', 'file_id': 'rar-55', 'api_version': 'v2'}
             if any(body.get(k) != v for k, v in expected.items()):
@@ -320,21 +368,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(payload)
                 return
             return self._json({'error': 'not found'}, 404)
-        if self.path.startswith("/api/v2/auth/login"):
-            return self._json(
-                {
-                    "access_token": "acc",
-                    "refresh_token": "ref",
-                    "expires_in": 3600,
-                    "user": {"id": "1", "username": "mock", "role": "user", "permissions": []},
-                }
-            )
-        if self.path.startswith("/api/v2/auth/refresh"):
-            return self._json({"access_token": "acc2", "refresh_token": "ref2", "expires_in": 3600})
-        if self.path.startswith("/api/v2/watched/"):
+        if path.startswith("/api/v2/watched/"):
             return self._json({"content_id": "c1", "played": True})
-        if self.path.startswith("/api/v2/profiles/") and self.path.endswith("/verify-pin"):
-            return self._json({"valid": True, "profile_token": "pvt"})
         return self._json({"type": "about:blank", "title": "not found", "status": 404}, 404)
 
     def do_DELETE(self):

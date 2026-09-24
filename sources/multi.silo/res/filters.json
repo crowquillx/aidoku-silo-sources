@@ -1,0 +1,30 @@
+[
+	{
+		"type": "text",
+		"id": "author",
+		"title": "Author",
+		"placeholder": "Filter by author"
+	},
+	{
+		"type": "range",
+		"id": "year",
+		"title": "Year",
+		"min": 1900,
+		"max": 2100
+	},
+	{
+		"type": "sort",
+		"id": "sort",
+		"title": "Sort",
+		"canAscend": false,
+		"options": [
+			"Title (A–Z)",
+			"Title (Z–A)",
+			"Recently Added",
+			"Oldest Added",
+			"Newest Released",
+			"Highest Rated",
+			"Author (A–Z)"
+		]
+	}
+]

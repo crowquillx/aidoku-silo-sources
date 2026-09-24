@@ -1,34 +1,39 @@
 use crate::{models::*, settings};
 use aidoku::{
-	alloc::{format, string::String, vec, vec::Vec},
+	AidokuError, Result,
+	alloc::{format, string::String, vec::Vec},
 	helpers::uri::encode_uri_component,
 	imports::{
 		defaults::{DefaultValue, defaults_get, defaults_set},
-		net::{HttpMethod, Request},
+		net::{HttpMethod, Request, Response},
 		std::current_date,
 	},
 	prelude::*,
 };
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use aidoku::Result;
-use serde::Deserialize;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
-
-#[derive(Deserialize, Default)]
-struct SystemInfo {
-	#[serde(default)]
-	api_major: i64,
-}
-
+// Session state cached in defaults. Token expiries are stored as strings:
+// Aidoku decodes an Int default as Int32 and traps on values whose postcard
+// zig-zag encoding exceeds Int32 (any timestamp past ~2034-02).
 const ACCESS_TOKEN_KEY: &str = "accessToken";
 const REFRESH_TOKEN_KEY: &str = "refreshToken";
 const TOKEN_EXPIRY_KEY: &str = "tokenExpiry";
+const DETECTED_VERSION_KEY: &str = "detectedVersion";
 const PROFILE_ID_KEY: &str = "profileId";
 const PROFILE_TOKEN_KEY: &str = "profileToken";
-const DETECTED_VERSION_KEY: &str = "detectedVersion";
+const PROFILE_TOKEN_EXPIRY_KEY: &str = "profileTokenExpiry";
+/// Digests of the settings the cached session belongs to, so changing the
+/// server, account, API key, profile, or PIN never reuses stale state.
+const AUTH_SCOPE_KEY: &str = "authScope";
+const PROFILE_SCOPE_KEY: &str = "profileScope";
 
 pub const PAGE_SIZE: i32 = 30;
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct SystemInfo {
+	api_major: i64,
+}
 
 #[derive(Serialize)]
 struct LoginBody<'a> {
@@ -46,8 +51,8 @@ struct PinBody<'a> {
 	pin: &'a str,
 }
 
-/// A small query-string builder. Keys are emitted verbatim (so bracketed rule
-/// engine keys work), values are percent-encoded.
+/// A small query-string builder. Keys are emitted verbatim, values are
+/// percent-encoded.
 pub struct Query {
 	pairs: Vec<(String, String)>,
 }
@@ -90,112 +95,152 @@ pub struct Client {
 }
 
 impl Client {
+	pub fn new(base: String, is_v2: bool) -> Self {
+		Self {
+			base,
+			prefix: if is_v2 { "/api/v2" } else { "/api/v1" },
+			is_v2,
+			token: String::new(),
+			profile_id: String::new(),
+			profile_token: None,
+			image_size: settings::image_size(),
+		}
+	}
+
 	/// Creates a client and completes authentication and profile selection.
+	/// A warm cache makes this free of network requests.
 	pub fn connect() -> Result<Self> {
 		let base = settings::base_url()?;
-		let forced = settings::api_version();
-		let order: Vec<bool> = match forced.as_str() {
-			"v2" => vec![true],
-			"v1" => vec![false],
-			_ => {
-				let primary = detect_version(&base);
-				if primary {
-					vec![true, false]
-				} else {
-					vec![false, true]
-				}
-			}
-		};
-
+		sync_session(&base, &settings::username());
 		let mut last_error = None;
-		for is_v2 in order {
-			println!(
-				"[silo] connecting base={base} api={}",
-				if is_v2 { "v2" } else { "v1" }
-			);
-			let mut client = Self {
-				base: base.clone(),
-				prefix: if is_v2 { "/api/v2" } else { "/api/v1" },
-				is_v2,
-				token: String::new(),
-				profile_id: String::new(),
-				profile_token: None,
-				image_size: settings::image_size(),
-			};
-			// Remember which API version worked so per-image auth can use the
-			// right prefix without a network round trip.
-			defaults_set(
-				DETECTED_VERSION_KEY,
-				DefaultValue::String(String::from(if is_v2 { "v2" } else { "v1" })),
-			);
+		for &is_v2 in versions(&base) {
+			let mut client = Self::new(base.clone(), is_v2);
 			match client
 				.authenticate(false)
-				.and_then(|_| client.resolve_profile())
+				.and_then(|()| client.select_profile())
 			{
 				Ok(()) => {
-					println!(
-						"[silo] connected api={} profile={}",
-						client.prefix, client.profile_id
-					);
+					remember_version(is_v2);
 					return Ok(client);
 				}
-				Err(err) => {
+				// Auto-detect falls through to the other API version when this
+				// one is missing (404) or retired (410).
+				Err(err) if is_missing_api(&err) => {
 					println!("[silo] connect failed api={}: {err:?}", client.prefix);
-					let try_other = forced == "auto" && looks_like_not_found(&err);
 					last_error = Some(err);
-					if !try_other {
-						break;
-					}
 				}
+				Err(err) => return Err(err),
 			}
 		}
 		Err(last_error.unwrap_or_else(|| error!("Could not connect to the Silo server.")))
+	}
+
+	/// The client for a direct image request: cached credentials, refreshed
+	/// when the access token or the profile's PIN verification has expired.
+	pub fn for_images() -> Self {
+		let Ok(base) = settings::base_url() else {
+			return Self::new(String::new(), false);
+		};
+		sync_session(&base, &settings::username());
+		let is_v2 = stored(DETECTED_VERSION_KEY).as_deref() == Some("v2");
+		let mut client = Self::new(base, is_v2);
+		if client.authenticate(false).is_ok() && client.select_profile().is_ok() {
+			return client;
+		}
+		// Best effort: use whatever the cache still holds.
+		client.token = stored(ACCESS_TOKEN_KEY).unwrap_or_default();
+		client.profile_id = stored(PROFILE_ID_KEY).unwrap_or_default();
+		client.profile_token = stored(PROFILE_TOKEN_KEY);
+		client
 	}
 
 	fn url(&self, path: &str) -> String {
 		format!("{}{}{}", self.base, self.prefix, path)
 	}
 
-	fn public_request(&self, method: HttpMethod, path: &str) -> Result<Request> {
-		Request::new(self.url(path), method).map_err(|e| error!("Invalid Silo request: {e:?}"))
+	pub fn file_url(&self, content_id: &str, file_id: &str) -> String {
+		self.url(&file_path(content_id, file_id))
 	}
 
-	fn authed_request(&self, method: HttpMethod, path: &str) -> Result<Request> {
-		let mut req = self.public_request(method, path)?;
-		req = req.header("Accept", "application/json");
-		let authorization = format!("Bearer {}", self.token);
-		req = req.header("Authorization", authorization.as_str());
+	fn public_post(&self, path: &str, body: &str) -> Result<Response> {
+		Request::post(self.url(path))
+			.map_err(|e| error!("Invalid Silo request: {e:?}"))?
+			.header("Content-Type", "application/json")
+			.header("Accept", "application/json")
+			.body(body)
+			.send()
+			.map_err(|e| error!("Could not reach the Silo server: {e:?}"))
+	}
+
+	/// Adds the session's credentials and profile headers to a request.
+	pub fn authorize(&self, mut request: Request) -> Request {
+		if !self.token.is_empty() {
+			let authorization = format!("Bearer {}", self.token);
+			request = request.header("Authorization", authorization.as_str());
+		}
 		if !self.profile_id.is_empty() {
-			req = req.header("X-Profile-Id", self.profile_id.as_str());
+			request = request.header("X-Profile-Id", self.profile_id.as_str());
 		}
 		if let Some(token) = &self.profile_token {
-			req = req.header("X-Profile-Token", token.as_str());
+			request = request.header("X-Profile-Token", token.as_str());
 		}
-		Ok(req)
+		request
+	}
+
+	/// Sends an authenticated request and fails on a non-2xx status. With
+	/// `retry`, a `401` signs in again and a `401`/`403` re-selects the profile
+	/// (an expired PIN verification), then the request is retried once.
+	fn send(
+		&mut self,
+		method: HttpMethod,
+		path: &str,
+		customize: &dyn Fn(Request) -> Request,
+		retry: bool,
+	) -> Result<Response> {
+		let mut retry = retry;
+		loop {
+			let request = Request::new(self.url(path), method)
+				.map_err(|e| error!("Invalid Silo request: {e:?}"))?;
+			let response = customize(self.authorize(request))
+				.send()
+				.map_err(|e| error!("Could not reach the Silo server: {e:?}"))?;
+			let status = response.status_code();
+			if retry && (status == 401 || status == 403) {
+				retry = false;
+				if status == 401 {
+					self.authenticate(true)?;
+				}
+				self.resolve_profile()?;
+				continue;
+			}
+			if !(200..300).contains(&status) {
+				return Err(status_error("Silo request failed", status, &response));
+			}
+			return Ok(response);
+		}
+	}
+
+	fn json<T: DeserializeOwned>(&mut self, path: &str) -> Result<T> {
+		self.send(
+			HttpMethod::Get,
+			path,
+			&|request| request.header("Accept", "application/json"),
+			true,
+		)?
+		.get_json_owned()
+		.map_err(|e| error!("Unexpected Silo response: {e:?}"))
 	}
 
 	fn authenticate(&mut self, force: bool) -> Result<()> {
-		if settings::auth_mode() == "apiKey" {
-			println!("[silo] authenticate: api key");
-			let key = settings::api_key();
-			if key.is_empty() {
+		if settings::use_api_key() {
+			self.token = settings::api_key();
+			if self.token.is_empty() {
 				bail!("Set a Silo API key in the source settings.");
 			}
-			self.token = key;
 			return Ok(());
 		}
-
 		if !force {
-			let token = defaults_get::<String>(ACCESS_TOKEN_KEY);
-			// Stored as a string: Aidoku decodes an Int default as Int32 and
-			// traps on values whose postcard zig-zag encoding exceeds Int32
-			// (any timestamp past ~2034-02, but also anything above 2^30).
-			let expiry = defaults_get::<String>(TOKEN_EXPIRY_KEY)
-				.and_then(|value| value.parse::<i64>().ok());
-			if let (Some(token), Some(expiry)) = (token, expiry)
-				&& !token.is_empty()
-				&& current_date() < expiry - 60
-			{
+			if let Some(token) = stored(ACCESS_TOKEN_KEY).filter(|_| unexpired(TOKEN_EXPIRY_KEY)) {
 				self.token = token;
 				return Ok(());
 			}
@@ -203,190 +248,155 @@ impl Client {
 				return Ok(());
 			}
 		}
-
 		let (username, password) = settings::credentials()
 			.ok_or_else(|| error!("Sign in to Silo in the source settings."))?;
-		let body = serde_json::to_string(&LoginBody {
-			username: &username,
-			password: &password,
-		})
-		.map_err(|e| error!("Failed to encode login: {e:?}"))?;
-		let response = self
-			.public_request(HttpMethod::Post, "/auth/login")?
-			.header("Content-Type", "application/json")
-			.header("Accept", "application/json")
-			.body(body)
-			.send()
-			.map_err(|e| error!("Could not reach the Silo server: {e:?}"))?;
-		let status = response.status_code();
-		if status == 401 || status == 403 {
-			bail!("Silo rejected those credentials.");
-		}
-		if !(200..300).contains(&status) {
-			let text = response.get_string().unwrap_or_default();
-			bail!("Silo login failed ({status}): {}", truncate(&text, 200));
-		}
-		let parsed: LoginResponse = response
-			.get_json_owned()
-			.map_err(|e| error!("Unexpected login response: {e:?}"))?;
-		self.token = parsed.access_token.clone();
-		store_tokens(&parsed);
+		let tokens = self
+			.login(&username, &password)?
+			.ok_or_else(|| error!("Silo rejected those credentials."))?;
+		self.token = tokens.access_token.clone();
+		store_tokens(&tokens, true);
 		Ok(())
 	}
 
-	fn refresh_session(&mut self) -> bool {
-		let refresh = defaults_get::<String>(REFRESH_TOKEN_KEY).unwrap_or_default();
-		if refresh.is_empty() {
-			return false;
+	/// Opens a login session; `None` when Silo rejects the credentials.
+	fn login(&self, username: &str, password: &str) -> Result<Option<LoginResponse>> {
+		let body = serde_json::to_string(&LoginBody { username, password })
+			.map_err(|e| error!("Failed to encode login: {e:?}"))?;
+		let response = self.public_post("/auth/login", &body)?;
+		match response.status_code() {
+			401 | 403 => Ok(None),
+			200..=299 => response
+				.get_json_owned()
+				.map(Some)
+				.map_err(|e| error!("Unexpected login response: {e:?}")),
+			status => Err(status_error("Silo login failed", status, &response)),
 		}
-		let body = match serde_json::to_string(&RefreshBody {
-			refresh_token: &refresh,
-		}) {
-			Ok(body) => body,
-			Err(_) => return false,
-		};
-		let Ok(request) = self.public_request(HttpMethod::Post, "/auth/refresh") else {
-			return false;
-		};
-		let Ok(response) = request
-			.header("Content-Type", "application/json")
-			.header("Accept", "application/json")
-			.body(body)
-			.send()
-		else {
-			return false;
-		};
-		if !(200..300).contains(&response.status_code()) {
-			return false;
-		}
-		let Ok(parsed) = response.get_json_owned::<LoginResponse>() else {
-			return false;
-		};
-		if parsed.access_token.is_empty() {
-			return false;
-		}
-		self.token = parsed.access_token.clone();
-		store_tokens(&parsed);
-		true
 	}
 
-	fn resolve_profile(&mut self) -> Result<()> {
-		let list: ProfileListResponse = self.json_get("/profiles")?;
-		let profiles = list.into_vec();
-		if profiles.is_empty() {
-			bail!("This Silo account has no profiles.");
+	fn refresh_session(&mut self) -> bool {
+		let Some(refresh) = stored(REFRESH_TOKEN_KEY) else {
+			return false;
+		};
+		let Ok(body) = serde_json::to_string(&RefreshBody {
+			refresh_token: &refresh,
+		}) else {
+			return false;
+		};
+		let Ok(response) = self.public_post("/auth/refresh", &body) else {
+			return false;
+		};
+		let status = response.status_code();
+		if status == 401 || status == 403 {
+			// The session was revoked; stop retrying it.
+			clear(REFRESH_TOKEN_KEY);
 		}
+		if !(200..300).contains(&status) {
+			return false;
+		}
+		match response.get_json_owned::<LoginResponse>() {
+			Ok(tokens) if !tokens.access_token.is_empty() => {
+				self.token = tokens.access_token.clone();
+				store_tokens(&tokens, false);
+				true
+			}
+			_ => false,
+		}
+	}
+
+	/// Uses the cached profile while its PIN verification is still valid.
+	fn select_profile(&mut self) -> Result<()> {
+		let Some(profile_id) = stored(PROFILE_ID_KEY) else {
+			return self.resolve_profile();
+		};
+		let profile_token = stored(PROFILE_TOKEN_KEY);
+		if profile_token.is_some() && !unexpired(PROFILE_TOKEN_EXPIRY_KEY) {
+			return self.resolve_profile();
+		}
+		self.profile_id = profile_id;
+		self.profile_token = profile_token;
+		Ok(())
+	}
+
+	/// Picks the configured profile and verifies its PIN. Never retries, so an
+	/// invalid credential fails instead of recursing through `send`.
+	fn resolve_profile(&mut self) -> Result<()> {
+		self.profile_id.clear();
+		self.profile_token = None;
+		let list: ProfileListResponse = self
+			.send(
+				HttpMethod::Get,
+				"/profiles",
+				&|request| request.header("Accept", "application/json"),
+				false,
+			)?
+			.get_json_owned()
+			.map_err(|e| error!("Unexpected Silo response: {e:?}"))?;
+		let profiles = list.into_vec();
 		let hint = settings::profile_hint();
 		let selected = if hint.is_empty() {
-			profiles
-				.iter()
-				.find(|p| p.is_primary)
-				.or_else(|| profiles.first())
-				.unwrap()
+			profiles.iter().find(|p| p.is_primary).or(profiles.first())
 		} else {
 			profiles
 				.iter()
 				.find(|p| p.id.as_string() == hint || p.name.eq_ignore_ascii_case(&hint))
-				.ok_or_else(|| error!("Profile '{hint}' was not found on the Silo server."))?
-		};
+		}
+		.ok_or_else(|| match hint.is_empty() {
+			true => error!("This Silo account has no profiles."),
+			false => error!("Profile '{hint}' was not found on the Silo server."),
+		})?;
+		let profile_id = selected.id.as_string();
 
-		let mut profile_token = None;
-		if selected.has_pin && settings::auth_mode() != "apiKey" {
-			let pin = settings::pin().ok_or_else(|| {
-				error!(
+		// API keys skip profile PIN prompts.
+		let mut verification = None;
+		if selected.has_pin && !settings::use_api_key() {
+			let pin = settings::pin();
+			if pin.is_empty() {
+				bail!(
 					"Profile '{}' is PIN protected. Set the PIN in the source settings.",
 					selected.name
-				)
-			})?;
+				);
+			}
 			let body = serde_json::to_string(&PinBody { pin: &pin })
 				.map_err(|e| error!("Failed to encode PIN: {e:?}"))?;
-			let path = format!(
-				"/profiles/{}/verify-pin",
-				encode_uri_component(selected.id.as_string())
-			);
-			let response: VerifyPinResponse = self.json_post(&path, body)?;
+			let path = format!("/profiles/{}/verify-pin", encode_uri_component(&profile_id));
+			let response: VerifyPinResponse = self
+				.send(
+					HttpMethod::Post,
+					&path,
+					&|request| {
+						request
+							.header("Accept", "application/json")
+							.header("Content-Type", "application/json")
+							.body(body.as_str())
+					},
+					false,
+				)?
+				.get_json_owned()
+				.map_err(|e| error!("Unexpected Silo response: {e:?}"))?;
 			if !response.valid {
 				bail!("Incorrect PIN for profile '{}'.", selected.name);
 			}
-			profile_token = response.profile_token;
+			verification = Some(response);
 		}
 
-		self.profile_id = selected.id.as_string();
-		self.profile_token = profile_token.clone();
+		defaults_set(PROFILE_ID_KEY, DefaultValue::String(profile_id.clone()));
+		let token = verification.as_ref().and_then(|v| v.profile_token.clone());
+		match &token {
+			Some(token) => defaults_set(PROFILE_TOKEN_KEY, DefaultValue::String(token.clone())),
+			None => clear(PROFILE_TOKEN_KEY),
+		}
+		// A token without an expiry is durable until the session ends.
+		let expiry = verification
+			.and_then(|v| v.expires_at)
+			.and_then(|at| at.as_str().and_then(parse_utc))
+			.unwrap_or(i64::MAX);
 		defaults_set(
-			PROFILE_ID_KEY,
-			DefaultValue::String(self.profile_id.clone()),
+			PROFILE_TOKEN_EXPIRY_KEY,
+			DefaultValue::String(format!("{expiry}")),
 		);
-		match profile_token {
-			Some(token) => defaults_set(PROFILE_TOKEN_KEY, DefaultValue::String(token)),
-			None => defaults_set(PROFILE_TOKEN_KEY, DefaultValue::Null),
-		}
+		self.profile_id = profile_id;
+		self.profile_token = token;
 		Ok(())
-	}
-
-	fn json<T: DeserializeOwned>(
-		&mut self,
-		method: HttpMethod,
-		path: &str,
-		body: Option<String>,
-	) -> Result<T> {
-		let mut attempts = 0;
-		loop {
-			let request = self.authed_request(method, path)?;
-			let request = match &body {
-				Some(body) => request
-					.header("Content-Type", "application/json")
-					.body(body.clone()),
-				None => request,
-			};
-			let response = request
-				.send()
-				.map_err(|e| error!("Could not reach the Silo server: {e:?}"))?;
-			let status = response.status_code();
-			if status == 401 && attempts == 0 {
-				attempts += 1;
-				self.authenticate(true)?;
-				self.resolve_profile()?;
-				continue;
-			}
-			if !(200..300).contains(&status) {
-				let text = response.get_string().unwrap_or_default();
-				bail!("Silo request failed ({status}): {}", truncate(&text, 240));
-			}
-			return response
-				.get_json_owned()
-				.map_err(|e| error!("Unexpected Silo response: {e:?}"));
-		}
-	}
-
-	fn json_get<T: DeserializeOwned>(&mut self, path: &str) -> Result<T> {
-		self.json(HttpMethod::Get, path, None)
-	}
-
-	fn json_post<T: DeserializeOwned>(&mut self, path: &str, body: String) -> Result<T> {
-		self.json(HttpMethod::Post, path, Some(body))
-	}
-
-	fn send_ok(&mut self, method: HttpMethod, path: &str) -> Result<()> {
-		let mut attempts = 0;
-		loop {
-			let response = self
-				.authed_request(method, path)?
-				.send()
-				.map_err(|e| error!("Could not reach the Silo server: {e:?}"))?;
-			let status = response.status_code();
-			if status == 401 && attempts == 0 {
-				attempts += 1;
-				self.authenticate(true)?;
-				self.resolve_profile()?;
-				continue;
-			}
-			if !(200..300).contains(&status) {
-				let text = response.get_string().unwrap_or_default();
-				bail!("Silo request failed ({status}): {}", truncate(&text, 200));
-			}
-			return Ok(());
-		}
 	}
 
 	// ----- endpoints -----
@@ -394,7 +404,7 @@ impl Client {
 	/// Enabled libraries this account can access, filtered to manga/comic
 	/// libraries. Silo scans both manga and western comics as `manga` type.
 	pub fn manga_libraries(&mut self) -> Result<Vec<Library>> {
-		let list: ListOrItems<Library> = self.json_get("/user/libraries")?;
+		let list: ListOrItems<Library> = self.json("/user/libraries")?;
 		Ok(list
 			.into_vec()
 			.into_iter()
@@ -403,71 +413,32 @@ impl Client {
 	}
 
 	pub fn catalog(&mut self, query: &Query) -> Result<CatalogResponse> {
-		self.json_get(&format!("/catalog?{}", query.encode()))
+		self.json(&format!("/catalog?{}", query.encode()))
 	}
 
 	pub fn item(&mut self, content_id: &str) -> Result<ItemDetail> {
-		let mut query = Query::new();
-		query.add("image_size", &self.image_size);
-		self.json_get(&format!(
-			"/catalog/items/{}?{}",
+		self.json(&format!(
+			"/catalog/items/{}?image_size={}",
 			encode_uri_component(content_id),
-			query.encode()
+			encode_uri_component(&self.image_size)
 		))
 	}
 
-	pub fn catalog_filters(&mut self, library_id: Option<&str>) -> Result<FiltersResponse> {
-		let mut query = Query::new();
-		query.add("type", "manga");
-		if let Some(id) = library_id {
-			query.add("library_id", id);
-		}
-		self.json_get(&format!("/catalog/filters?{}", query.encode()))
+	pub fn catalog_filters(&mut self) -> Result<FiltersResponse> {
+		self.json("/catalog/filters?type=manga&skip_technical=true")
 	}
 
 	pub fn library_sections(&mut self, library_id: &str) -> Result<SectionResponse> {
-		let mut query = Query::new();
-		query.add("image_size", &self.image_size);
-		self.json_get(&format!(
-			"/library/{}/sections?{}",
+		self.json(&format!(
+			"/library/{}/sections?image_size={}",
 			encode_uri_component(library_id),
-			query.encode()
+			encode_uri_component(&self.image_size)
 		))
 	}
 
-	/// Returns the total archive size reported by a `HEAD` request.
-	pub fn chapter_size(&mut self, content_id: &str, file_id: &str) -> Result<Option<u64>> {
-		let path = format!(
-			"/ebooks/{}/files/{}/read",
-			encode_uri_component(content_id),
-			encode_uri_component(file_id)
-		);
-		let mut attempts = 0;
-		loop {
-			let response = self
-				.authed_request(HttpMethod::Head, &path)?
-				.send()
-				.map_err(|e| error!("Could not reach the Silo server: {e:?}"))?;
-			let status = response.status_code();
-			if status == 401 && attempts == 0 {
-				attempts += 1;
-				self.authenticate(true)?;
-				self.resolve_profile()?;
-				continue;
-			}
-			if !(200..300).contains(&status) {
-				let text = response.get_string().unwrap_or_default();
-				bail!("Silo request failed ({status}): {}", truncate(&text, 200));
-			}
-			return Ok(response
-				.get_header("Content-Length")
-				.and_then(|value| value.trim().parse::<u64>().ok()));
-		}
-	}
-
 	/// Fetches a byte range of a chapter archive. `start` is absolute; `end` is
-	/// inclusive. Returns the bytes plus the response status and resolved range
-	/// so callers can tell a `206` slice from a `200` whole-file fallback.
+	/// inclusive. A `206` carries the resolved offset and archive length in its
+	/// `Content-Range`; a `200` is the whole archive.
 	pub fn chapter_range(
 		&mut self,
 		content_id: &str,
@@ -475,237 +446,246 @@ impl Client {
 		start: u64,
 		end: Option<u64>,
 	) -> Result<RangeData> {
-		let path = format!(
-			"/ebooks/{}/files/{}/read",
-			encode_uri_component(content_id),
-			encode_uri_component(file_id)
-		);
 		let range = match end {
 			Some(end) => format!("bytes={start}-{end}"),
 			None => format!("bytes={start}-"),
 		};
-		let mut attempts = 0;
-		loop {
-			let response = self
-				.authed_request(HttpMethod::Get, &path)?
-				.header("Range", range.as_str())
-				.send()
-				.map_err(|e| error!("Could not reach the Silo server: {e:?}"))?;
-			let status = response.status_code();
-			if status == 401 && attempts == 0 {
-				attempts += 1;
-				self.authenticate(true)?;
-				self.resolve_profile()?;
-				continue;
-			}
-			if !(200..300).contains(&status) {
-				let text = response.get_string().unwrap_or_default();
-				bail!("Silo request failed ({status}): {}", truncate(&text, 200));
-			}
-			let content_range = response.get_header("Content-Range");
-			let data = response
-				.get_data()
-				.map_err(|e| error!("Failed to read Silo response: {e:?}"))?;
-			let resolved_start = if status == 200 {
-				0
-			} else {
-				parse_content_range(content_range.as_deref(), start)
-			};
-			return Ok(RangeData {
-				data,
-				status,
-				start: resolved_start,
-			});
-		}
+		let response = self.send(
+			HttpMethod::Get,
+			&file_path(content_id, file_id),
+			&|request| request.header("Range", range.as_str()),
+			true,
+		)?;
+		let status = response.status_code();
+		let content_range = response.get_header("Content-Range");
+		let data = response
+			.get_data()
+			.map_err(|e| error!("Failed to read Silo response: {e:?}"))?;
+		let (start, total) = if status == 206 {
+			parse_content_range(content_range.as_deref(), start)
+		} else {
+			(0, Some(data.len() as u64))
+		};
+		Ok(RangeData { data, start, total })
+	}
+
+	/// The installation ID of an enabled plugin, from the user plugin list.
+	/// Silo lists plugins with user settings or a user navigation route.
+	pub fn plugin_installation(&mut self, plugin_id: &str) -> Result<Option<String>> {
+		let list: ListOrItems<PluginInstallation> = self.json("/settings/plugins")?;
+		Ok(list
+			.into_vec()
+			.into_iter()
+			.find(|installation| installation.plugin_id == plugin_id)
+			.map(|installation| installation.id.as_string()))
 	}
 
 	pub fn mark_read(&mut self, content_id: &str) -> Result<()> {
-		self.send_ok(
-			HttpMethod::Post,
-			&format!("/watched/{}", encode_uri_component(content_id)),
-		)
+		let path = format!("/watched/{}", encode_uri_component(content_id));
+		self.send(HttpMethod::Post, &path, &|request| request, true)
+			.map(|_| ())
 	}
 }
 
-fn detect_version(base: &str) -> bool {
-	match settings::api_version().as_str() {
-		"v2" => true,
-		"v1" => false,
-		_ => {
-			let url = format!("{base}/api/v2/system/info");
-			let Ok(request) = Request::get(url) else {
-				return false;
-			};
-			let Ok(response) = request.header("Accept", "application/json").send() else {
-				return false;
-			};
-			if response.status_code() != 200 {
-				return false;
+/// Verifies credentials for the `BasicLoginHandler` and keeps the resulting
+/// session, replacing any cached one.
+pub fn validate_login(username: &str, password: &str) -> Result<bool> {
+	let base = settings::base_url()?;
+	let mut last_error = None;
+	for &is_v2 in versions(&base) {
+		match Client::new(base.clone(), is_v2).login(username, password) {
+			Ok(Some(tokens)) => {
+				sync_session(&base, username.trim());
+				store_tokens(&tokens, true);
+				remember_version(is_v2);
+				return Ok(true);
 			}
-			// Only trust a real v2 discovery document, not an SPA/WAF page that
-			// happens to answer 200.
-			response
-				.get_json_owned::<SystemInfo>()
-				.map(|info| info.api_major == 2)
-				.unwrap_or(false)
+			Ok(None) => return Ok(false),
+			Err(err) if is_missing_api(&err) => last_error = Some(err),
+			Err(err) => return Err(err),
 		}
 	}
+	Err(last_error.unwrap_or_else(|| error!("Could not reach the Silo server.")))
 }
 
-fn looks_like_not_found(error: &aidoku::AidokuError) -> bool {
-	match error {
-		aidoku::AidokuError::Message(message) => message.contains("(404)"),
-		_ => false,
+/// The API versions to try, in order (`true` is v2).
+fn versions(base: &str) -> &'static [bool] {
+	match settings::api_version().as_str() {
+		"v2" => &[true],
+		"v1" => &[false],
+		// A cached v2 detection skips the probe; v1 keeps probing so an
+		// upgraded server moves to v2.
+		_ if stored(DETECTED_VERSION_KEY).as_deref() == Some("v2") || probe_v2(base) => {
+			&[true, false]
+		}
+		_ => &[false, true],
 	}
 }
 
-fn store_tokens(response: &LoginResponse) {
+/// Whether the server publishes a real v2 discovery document, not an SPA or
+/// WAF page that happens to answer 200.
+fn probe_v2(base: &str) -> bool {
+	Request::get(format!("{base}/api/v2/system/info"))
+		.ok()
+		.and_then(|request| request.header("Accept", "application/json").send().ok())
+		.filter(|response| response.status_code() == 200)
+		.and_then(|response| response.get_json_owned::<SystemInfo>().ok())
+		.is_some_and(|info| info.api_major == 2)
+}
+
+fn remember_version(is_v2: bool) {
+	let version = if is_v2 { "v2" } else { "v1" };
+	defaults_set(
+		DETECTED_VERSION_KEY,
+		DefaultValue::String(String::from(version)),
+	);
+}
+
+fn status_error(context: &str, status: i32, response: &Response) -> AidokuError {
+	let text = response.get_string().unwrap_or_default();
+	error!("{context} ({status}): {}", truncate(&text, 200))
+}
+
+fn is_missing_api(error: &AidokuError) -> bool {
+	matches!(error, AidokuError::Message(message)
+		if message.contains("(404)") || message.contains("(410)"))
+}
+
+fn file_path(content_id: &str, file_id: &str) -> String {
+	format!(
+		"/ebooks/{}/files/{}/read",
+		encode_uri_component(content_id),
+		encode_uri_component(file_id)
+	)
+}
+
+/// Clears a cached value. An empty string rather than `Null`, which the
+/// aidoku test runner cannot store; `stored` treats both as unset.
+fn clear(key: &str) {
+	defaults_set(key, DefaultValue::String(String::new()));
+}
+
+fn stored(key: &str) -> Option<String> {
+	defaults_get::<String>(key).filter(|value| !value.is_empty())
+}
+
+/// Whether the timestamp stored under `key` is more than a minute away.
+fn unexpired(key: &str) -> bool {
+	stored(key)
+		.and_then(|value| value.parse::<i64>().ok())
+		.is_some_and(|expiry| current_date() < expiry.saturating_sub(60))
+}
+
+fn store_tokens(tokens: &LoginResponse, new_session: bool) {
 	defaults_set(
 		ACCESS_TOKEN_KEY,
-		DefaultValue::String(response.access_token.clone()),
+		DefaultValue::String(tokens.access_token.clone()),
 	);
-	if let Some(refresh) = &response.refresh_token {
+	if let Some(refresh) = &tokens.refresh_token {
 		defaults_set(REFRESH_TOKEN_KEY, DefaultValue::String(refresh.clone()));
 	}
-	if let Some(expires_in) = response.expires_in {
-		let expiry = current_date().saturating_add(expires_in);
-		defaults_set(TOKEN_EXPIRY_KEY, DefaultValue::String(format!("{expiry}")));
+	// An unknown lifetime is not trusted: the next call refreshes.
+	let expiry = tokens
+		.expires_in
+		.map_or(0, |seconds| current_date().saturating_add(seconds));
+	defaults_set(TOKEN_EXPIRY_KEY, DefaultValue::String(format!("{expiry}")));
+	// Profile tokens are bound to the login session that verified the PIN.
+	if new_session {
+		defaults_set(
+			PROFILE_TOKEN_EXPIRY_KEY,
+			DefaultValue::String(String::from("0")),
+		);
 	}
+}
+
+/// Clears cached session state whose settings changed since it was stored.
+fn sync_session(base: &str, username: &str) {
+	let api_key = if settings::use_api_key() {
+		settings::api_key()
+	} else {
+		String::new()
+	};
+	let auth = digest(&[base, username, &api_key]);
+	let profile = digest(&[&auth, &settings::profile_hint(), &settings::pin()]);
+	reset_if_changed(
+		AUTH_SCOPE_KEY,
+		auth,
+		&[
+			ACCESS_TOKEN_KEY,
+			REFRESH_TOKEN_KEY,
+			TOKEN_EXPIRY_KEY,
+			DETECTED_VERSION_KEY,
+		],
+	);
+	reset_if_changed(
+		PROFILE_SCOPE_KEY,
+		profile,
+		&[PROFILE_ID_KEY, PROFILE_TOKEN_KEY, PROFILE_TOKEN_EXPIRY_KEY],
+	);
+}
+
+fn reset_if_changed(scope_key: &str, scope: String, keys: &[&str]) {
+	if stored(scope_key).as_deref() == Some(scope.as_str()) {
+		return;
+	}
+	for key in keys {
+		clear(key);
+	}
+	defaults_set(scope_key, DefaultValue::String(scope));
+}
+
+/// A 64-bit FNV-1a digest, so the stored scope never holds a secret.
+fn digest(parts: &[&str]) -> String {
+	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+	for part in parts {
+		for byte in part.bytes().chain([0]) {
+			hash = (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3);
+		}
+	}
+	format!("{hash:016x}")
+}
+
+/// Parses the UTC `YYYY-MM-DDTHH:MM:SS` prefix of an RFC 3339 timestamp into
+/// Unix seconds. Silo emits these in UTC (`Z`).
+pub fn parse_utc(value: &str) -> Option<i64> {
+	let field = |range: core::ops::Range<usize>| -> Option<i64> { value.get(range)?.parse().ok() };
+	let (year, month, day) = (field(0..4)?, field(5..7)?, field(8..10)?);
+	let seconds = field(11..13)? * 3_600 + field(14..16)? * 60 + field(17..19)?;
+	// Days since the Unix epoch from a civil date (Howard Hinnant's algorithm).
+	let year = if month <= 2 { year - 1 } else { year };
+	let era = year.div_euclid(400);
+	let year_of_era = year - era * 400;
+	let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+	let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+	Some((era * 146_097 + day_of_era - 719_468) * 86_400 + seconds)
 }
 
 fn truncate(value: &str, limit: usize) -> String {
-	if value.len() <= limit {
-		return String::from(value);
+	match value.char_indices().nth(limit) {
+		Some((index, _)) => format!("{}…", &value[..index]),
+		None => String::from(value),
 	}
-	let mut out = String::new();
-	for c in value.chars().take(limit) {
-		out.push(c);
-	}
-	out.push('…');
-	out
-}
-
-/// Verifies credentials for the `BasicLoginHandler` without touching the
-/// cached session (the app calls this when the user submits the login form).
-pub fn validate_credentials(
-	base: &str,
-	is_v2: bool,
-	username: &str,
-	password: &str,
-) -> Result<bool> {
-	let prefix = if is_v2 { "/api/v2" } else { "/api/v1" };
-	let body = serde_json::to_string(&LoginBody { username, password })
-		.map_err(|e| error!("Failed to encode login: {e:?}"))?;
-	let response = Request::post(format!("{base}{prefix}/auth/login"))
-		.map_err(|e| error!("Invalid Silo request: {e:?}"))?
-		.header("Content-Type", "application/json")
-		.header("Accept", "application/json")
-		.body(body)
-		.send()
-		.map_err(|e| error!("Could not reach the Silo server: {e:?}"))?;
-	Ok((200..300).contains(&response.status_code()))
-}
-
-/// The version detection used before authentication (public probe).
-pub fn probe_version(base: &str) -> bool {
-	detect_version(base)
-}
-
-/// The authentication state needed to fetch a page range directly.
-pub struct StoredAuth {
-	pub token: Option<String>,
-	pub profile_id: String,
-	pub profile_token: Option<String>,
-}
-
-/// Reads the credentials to use for a direct image request, refreshing the
-/// session if the cached access token has expired. `ImageRequestProvider` runs
-/// this once per image, so the fast path is a defaults read; it only performs a
-/// network request when the token is actually stale (which otherwise left page
-/// images unauthenticated after a long reading session).
-pub fn ensure_image_auth() -> StoredAuth {
-	let profile_id = defaults_get::<String>(PROFILE_ID_KEY).unwrap_or_default();
-	let profile_token = defaults_get::<String>(PROFILE_TOKEN_KEY).filter(|value| !value.is_empty());
-	let cached = defaults_get::<String>(ACCESS_TOKEN_KEY).filter(|value| !value.is_empty());
-
-	if settings::auth_mode() == "apiKey" {
-		let key = settings::api_key();
-		return StoredAuth {
-			token: (!key.is_empty()).then_some(key),
-			profile_id,
-			profile_token,
-		};
-	}
-
-	if let (Some(token), Some(expiry)) = (cached.clone(), expiry_from_defaults())
-		&& current_date() < expiry - 60
-	{
-		return StoredAuth {
-			token: Some(token),
-			profile_id,
-			profile_token,
-		};
-	}
-
-	let Ok(base) = settings::base_url() else {
-		return StoredAuth {
-			token: cached,
-			profile_id,
-			profile_token,
-		};
-	};
-	let is_v2 = defaults_get::<String>(DETECTED_VERSION_KEY)
-		.map(|value| value == "v2")
-		.unwrap_or(false);
-	println!("[silo] image auth: refreshing session");
-	let mut client = Client {
-		base,
-		prefix: if is_v2 { "/api/v2" } else { "/api/v1" },
-		is_v2,
-		token: String::new(),
-		profile_id: profile_id.clone(),
-		profile_token: profile_token.clone(),
-		image_size: settings::image_size(),
-	};
-	if client.authenticate(false).is_ok() && !client.token.is_empty() {
-		return StoredAuth {
-			token: Some(client.token),
-			profile_id,
-			profile_token,
-		};
-	}
-	// Best effort: use whatever token we had.
-	StoredAuth {
-		token: cached,
-		profile_id,
-		profile_token,
-	}
-}
-
-fn expiry_from_defaults() -> Option<i64> {
-	defaults_get::<String>(TOKEN_EXPIRY_KEY).and_then(|value| value.parse::<i64>().ok())
 }
 
 /// A fetched archive byte range.
 pub struct RangeData {
 	pub data: Vec<u8>,
-	/// The HTTP status: `206` for a range slice, `200` for a whole-file fallback.
-	#[allow(dead_code)]
-	pub status: i32,
 	/// Absolute offset the returned bytes start at.
 	pub start: u64,
+	/// The archive's total length, when the server reported it.
+	pub total: Option<u64>,
 }
 
-fn parse_content_range(header: Option<&str>, fallback_start: u64) -> u64 {
-	let Some(value) = header else {
-		return fallback_start;
+/// Parses `bytes <start>-<end>/<total>` into the start offset and total.
+fn parse_content_range(header: Option<&str>, fallback_start: u64) -> (u64, Option<u64>) {
+	let Some(rest) = header.and_then(|value| value.trim().strip_prefix("bytes ")) else {
+		return (fallback_start, None);
 	};
-	let Some(rest) = value.trim().strip_prefix("bytes ") else {
-		return fallback_start;
-	};
-	rest.split('/')
+	let (range, total) = rest.split_once('/').unwrap_or((rest, "*"));
+	let start = range
+		.split('-')
 		.next()
-		.and_then(|range| range.split('-').next())
-		.and_then(|part| part.trim().parse::<u64>().ok())
-		.unwrap_or(fallback_start)
+		.and_then(|part| part.trim().parse().ok())
+		.unwrap_or(fallback_start);
+	(start, total.trim().parse().ok())
 }

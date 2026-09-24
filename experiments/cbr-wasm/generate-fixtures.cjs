@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const large = process.argv.includes('--large');
-const fixtureDir = path.join(__dirname, large ? 'artifacts/large' : 'fixtures');
+const fixtureDir = path.join(__dirname, large ? 'artifacts/large' : '../../crates/cbr-native/fixtures');
 const zlib = require('zlib');
 const {RarWriter} = require('@bitplane/rars');
 function crc32(buf) { let c=0xffffffff; for(const b of buf){c^=b;for(let i=0;i<8;i++)c=(c>>>1)^((c&1)?0xedb88320:0);}return (c^0xffffffff)>>>0; }

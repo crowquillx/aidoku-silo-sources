@@ -6,7 +6,7 @@ edition="2024"
 crate-type=["cdylib"]
 [dependencies]
 aidoku={git="https://github.com/Aidoku/aidoku-rs.git"}
-silo-cbr-native={path="../cbr-native"}
+silo-cbr-native={path="../../crates/cbr-native"}
 [dev-dependencies]
 aidoku={git="https://github.com/Aidoku/aidoku-rs.git",features=["test"]}
 aidoku-test={git="https://github.com/Aidoku/aidoku-rs.git"}

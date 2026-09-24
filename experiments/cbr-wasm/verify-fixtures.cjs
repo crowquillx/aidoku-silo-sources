@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createExtractorFromData } = require('node-unrar-js');
-const dir = path.resolve(__dirname, process.argv.includes('--large') ? 'artifacts/large' : 'fixtures');
+const dir = path.resolve(__dirname, process.argv.includes('--large') ? 'artifacts/large' : '../../crates/cbr-native/fixtures');
 (async () => {
   for (const name of fs.readdirSync(dir).filter(x => x.endsWith('.cbr'))) {
     const data = Uint8Array.from(fs.readFileSync(path.join(dir, name))).buffer;

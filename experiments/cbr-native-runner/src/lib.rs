@@ -13,16 +13,16 @@ fn run(input: &[u8], index: i32) -> Vec<u8> {
 #[unsafe(no_mangle)]
 pub extern "C" fn rar_fixture_benchmark(which: u32, index: i32) -> u32 {
 	let input: [&[u8]; 4] = [
-		include_bytes!("../../cbr-wasm/fixtures/rar40-normal.cbr"),
-		include_bytes!("../../cbr-wasm/fixtures/rar40-solid.cbr"),
-		include_bytes!("../../cbr-wasm/fixtures/rar50-normal.cbr"),
-		include_bytes!("../../cbr-wasm/fixtures/rar50-solid.cbr"),
+		include_bytes!("../../../crates/cbr-native/fixtures/rar40-normal.cbr"),
+		include_bytes!("../../../crates/cbr-native/fixtures/rar40-solid.cbr"),
+		include_bytes!("../../../crates/cbr-native/fixtures/rar50-normal.cbr"),
+		include_bytes!("../../../crates/cbr-native/fixtures/rar50-solid.cbr"),
 	];
 	let out = run(input[which as usize], index);
 	if index >= 0 {
 		assert_eq!(
 			out.as_slice(),
-			include_bytes!("../../cbr-wasm/fixtures/page1.png")
+			include_bytes!("../../../crates/cbr-native/fixtures/page1.png")
 		);
 	}
 	out.len() as u32

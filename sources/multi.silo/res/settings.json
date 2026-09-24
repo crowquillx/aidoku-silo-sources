@@ -40,12 +40,11 @@
 		"title": "Authentication",
 		"items": [
 			{
-				"type": "select",
-				"key": "authMode",
-				"title": "Auth Mode",
-				"values": ["credentials", "apiKey"],
-				"titles": ["Username & Password", "API Key"],
-				"default": "credentials",
+				"type": "switch",
+				"key": "useApiKey",
+				"title": "Use API Key",
+				"subtitle": "Sign in with an API key instead of a username and password.",
+				"default": false,
 				"refreshes": ["content", "listings"]
 			},
 			{
@@ -54,12 +53,14 @@
 				"key": "credentials",
 				"title": "LOGIN",
 				"requires": "baseUrl",
+				"requiresFalse": "useApiKey",
 				"refreshes": ["content", "listings"]
 			},
 			{
 				"type": "text",
 				"key": "apiKey",
 				"title": "API Key",
+				"requires": "useApiKey",
 				"placeholder": "sa_...",
 				"secure": true,
 				"keyboardType": 3,
@@ -68,7 +69,7 @@
 				"refreshes": ["content", "listings"]
 			}
 		],
-		"footer": "Sign in with your Silo username and password, or paste an unscoped API key (sa_...) for long-lived access. API keys skip profile PIN prompts."
+		"footer": "Sign in with your Silo username and password, or turn on Use API Key and paste an unscoped API key (sa_...) for long-lived access. API keys skip profile PIN prompts."
 	},
 	{
 		"type": "group",
@@ -100,10 +101,19 @@
 		"title": "Reading",
 		"items": [
 			{
+				"type": "switch",
+				"key": "useComicPages",
+				"title": "Use Comic Pages plugin",
+				"subtitle": "Extract CBR pages on the server when the plugin is installed.",
+				"default": true,
+				"refreshes": ["content"]
+			},
+			{
 				"type": "text",
 				"key": "comicPagesPlugin",
 				"title": "Comic Pages plugin installation ID",
-				"placeholder": "Optional, from Silo Administration → Plugins",
+				"placeholder": "Optional, detected automatically",
+				"requires": "useComicPages",
 				"autocorrectionDisabled": true,
 				"autocapitalizationType": 0,
 				"refreshes": ["content"]
@@ -112,10 +122,10 @@
 				"type": "switch",
 				"key": "markReadOnOpen",
 				"title": "Mark chapters read on Silo",
-				"subtitle": "Marks a chapter as read on Silo when you open it in Aidoku.",
+				"subtitle": "Marks a chapter as read on Silo when you open or download it in Aidoku.",
 				"default": true
 			}
 		],
-		"footer": "Install Comic Pages on Silo and enter its installation ID to extract CBR pages on the server. Leave blank to use the built-in decoder."
+		"footer": "With the Comic Pages plugin installed on Silo, CBR pages are extracted on the server; the source finds it automatically on v2 servers. Enter an installation ID only for v1 servers. Without the plugin, CBR chapters are decoded on the device."
 	}
 ]

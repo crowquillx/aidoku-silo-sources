@@ -8,9 +8,11 @@ use aidoku::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{Client, client, settings};
+use crate::{Client, settings};
 
 pub const MARKER: &str = "silo_plugin";
+/// The plugin's ID in its manifest, which Silo lists per installation.
+const PLUGIN_ID: &str = "dev.crowquillx.comic-pages";
 const CHUNK_BYTES: usize = 1_048_576;
 const MAX_PAGE_BYTES: u64 = 32 * 1024 * 1024;
 
@@ -79,10 +81,34 @@ fn request(url: &str, body: &ReadRequest<'_>) -> Result<Request> {
 	Ok(request)
 }
 
-pub fn pages(client: &Client, content_id: &str, file_id: &str) -> Result<Vec<Page>> {
-	let installation = settings::comic_pages_plugin();
+/// The Comic Pages installation to extract CBR pages with, if any: the
+/// configured ID, otherwise the one Silo lists for this user (v2 only).
+pub fn installation(client: &mut Client) -> Option<String> {
+	if !settings::use_comic_pages() {
+		return None;
+	}
+	let configured = settings::comic_pages_plugin();
+	if !configured.is_empty() {
+		return Some(configured);
+	}
+	if !client.is_v2 {
+		return None;
+	}
+	client
+		.plugin_installation(PLUGIN_ID)
+		.inspect_err(|e| println!("[silo] Comic Pages detection failed: {e:?}"))
+		.ok()
+		.flatten()
+}
+
+pub fn pages(
+	client: &Client,
+	installation: &str,
+	content_id: &str,
+	file_id: &str,
+) -> Result<Vec<Page>> {
 	let api_version = if client.is_v2 { "v2" } else { "v1" };
-	let base = plugin_base(&client.base, &installation, api_version)?;
+	let base = plugin_base(&client.base, installation, api_version)?;
 	let url = format!("{base}/pages");
 	let body = ReadRequest {
 		token: &client.token,
@@ -127,7 +153,7 @@ pub fn pages(client: &Client, content_id: &str, file_id: &str) -> Result<Vec<Pag
 			}
 			let mut context = PageContext::new();
 			for (key, value) in [
-				(MARKER, installation.clone()),
+				(MARKER, String::from(installation)),
 				("silo_plugin_api", String::from(api_version)),
 				("silo_plugin_content", String::from(content_id)),
 				("silo_plugin_file", String::from(file_id)),
@@ -164,7 +190,8 @@ fn value<'a>(context: &'a PageContext, key: &str) -> Result<&'a str> {
 
 fn page_url(context: &PageContext) -> Result<String> {
 	let installation = value(context, MARKER)?;
-	if installation != settings::comic_pages_plugin() {
+	let configured = settings::comic_pages_plugin();
+	if !settings::use_comic_pages() || (!configured.is_empty() && installation != configured) {
 		bail!("Comic Pages settings changed. Reopen the chapter.");
 	}
 	let base = plugin_base(
@@ -192,19 +219,14 @@ pub fn image_request(url: &str, context: &PageContext, offset: u64) -> Result<Re
 	if url != page_url(context)? {
 		bail!("Comic Pages URL does not match this Silo server. Reopen the chapter.");
 	}
-	let auth = client::ensure_image_auth();
+	let auth = Client::for_images();
 	if auth.profile_id != value(context, "silo_plugin_profile")? {
 		bail!("Silo profile changed. Reopen the chapter.");
 	}
-	let token = if settings::auth_mode() == "apiKey" {
-		settings::api_key()
-	} else {
-		auth.token.unwrap_or_default()
-	};
 	request(
 		url,
 		&ReadRequest {
-			token: &token,
+			token: &auth.token,
 			profile_id: &auth.profile_id,
 			profile_token: auth.profile_token.as_deref(),
 			content_id: value(context, "silo_plugin_content")?,

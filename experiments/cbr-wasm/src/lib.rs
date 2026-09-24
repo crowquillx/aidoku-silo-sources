@@ -75,14 +75,14 @@ pub unsafe extern "C" fn probe_run(ptr: u32, len: u32, index: i32, fuel: u64) ->
 #[unsafe(no_mangle)]
 pub extern "C" fn rar_fixture_benchmark(which: u32, index: i32) -> u32 {
 	let fixtures: [&[u8]; 4] = [
-		include_bytes!("../fixtures/rar40-normal.cbr"),
-		include_bytes!("../fixtures/rar40-solid.cbr"),
-		include_bytes!("../fixtures/rar50-normal.cbr"),
-		include_bytes!("../fixtures/rar50-solid.cbr"),
+		include_bytes!("../../../crates/cbr-native/fixtures/rar40-normal.cbr"),
+		include_bytes!("../../../crates/cbr-native/fixtures/rar40-solid.cbr"),
+		include_bytes!("../../../crates/cbr-native/fixtures/rar50-normal.cbr"),
+		include_bytes!("../../../crates/cbr-native/fixtures/rar50-solid.cbr"),
 	];
 	let out = call_rar(fixtures[which as usize], index, 500_000_000).unwrap();
 	if index >= 0 {
-		assert_eq!(out.as_slice(), include_bytes!("../fixtures/page1.png"));
+		assert_eq!(out.as_slice(), include_bytes!("../../../crates/cbr-native/fixtures/page1.png"));
 	}
 	out.len() as u32
 }

@@ -159,18 +159,83 @@ pub fn list_members(input: &[u8]) -> Result<Vec<Member>, Error> {
 		.collect())
 }
 
-/// Extract one member by archive index.
+/// Extract one member by archive index. A solid member decodes its group
+/// from the start; use [`for_each_member`] to extract several.
 pub fn extract_member(input: &[u8], index: usize) -> Result<Vec<u8>, Error> {
 	let archive = parse_archive(input)?;
 	let file = archive.files.get(index).ok_or(Error::MemberIndex)?;
 	if file.directory {
 		return Err(Error::Directory);
 	}
+	let start = solid_group_start(&archive, index);
+	let mut selected = None;
+	extract_group(input, &archive, start, index, &mut |member, output| {
+		if member == index {
+			selected = Some(output.to_vec());
+		}
+	})?;
+	selected.ok_or(Error::InvalidArchive("RAR target member is missing"))
+}
 
-	match archive.family {
-		Family::Rar4 => extract_rar4(input, &archive, index),
-		Family::Rar5 => extract_rar5(input, &archive, index),
+/// Extract every file member in archive order, decoding each solid group
+/// once. `visit` receives each member's archive index and verified bytes.
+pub fn for_each_member(input: &[u8], mut visit: impl FnMut(usize, &[u8])) -> Result<(), Error> {
+	let archive = parse_archive(input)?;
+	let mut start = 0usize;
+	while start < archive.files.len() {
+		let mut last = start;
+		while last + 1 < archive.files.len() && solid_group_start(&archive, last + 1) <= start {
+			last += 1;
+		}
+		extract_group(input, &archive, start, last, &mut visit)?;
+		start = last + 1;
 	}
+	Ok(())
+}
+
+/// The first member of the solid group containing `index`.
+fn solid_group_start(archive: &Archive, index: usize) -> usize {
+	if archive.family == Family::Rar4 && archive.main_solid {
+		return 0;
+	}
+	let mut start = index;
+	while start > 0 && archive.files[start].solid {
+		start -= 1;
+	}
+	start
+}
+
+/// Decodes members `start..=last`, which must begin a solid group (or be
+/// independent members), and visits each file member's output.
+fn extract_group(
+	input: &[u8],
+	archive: &Archive,
+	start: usize,
+	last: usize,
+	visit: &mut dyn FnMut(usize, &[u8]),
+) -> Result<(), Error> {
+	let stored = |file: &FileEntry| match archive.family {
+		Family::Rar4 => file.method == 0x30,
+		Family::Rar5 => file.method == 0,
+	};
+	let group = &archive.files[start..=last];
+	let solid = (archive.family == Family::Rar4 && archive.main_solid)
+		|| group.iter().any(|file| file.solid);
+	let compressed_group = solid && !group.iter().any(|file| file.directory || stored(file));
+	if compressed_group {
+		return match archive.family {
+			Family::Rar4 => extract_rar4_solid(input, archive, start, last, visit),
+			Family::Rar5 => extract_rar5_solid(input, archive, start, last, visit),
+		};
+	}
+	for file in group.iter().filter(|file| !file.directory) {
+		let output = match archive.family {
+			Family::Rar4 => extract_rar4(input, file)?,
+			Family::Rar5 => extract_rar5(input, file)?,
+		};
+		visit(file.index, &output);
+	}
+	Ok(())
 }
 
 fn parse_archive(input: &[u8]) -> Result<Archive, Error> {
@@ -805,73 +870,67 @@ fn validate_solid_range(
 	Ok(())
 }
 
-fn extract_rar4(input: &[u8], archive: &Archive, index: usize) -> Result<Vec<u8>, Error> {
-	let target = &archive.files[index];
+/// Extracts a stored or independently compressed RAR4 member.
+fn extract_rar4(input: &[u8], target: &FileEntry) -> Result<Vec<u8>, Error> {
 	if target.method == 0x30 {
 		let output = input[target.packed.clone()].to_vec();
 		verify_crc(output.as_slice(), target.crc32)?;
 		return Ok(output);
 	}
-	let solid = archive.main_solid || target.solid;
-	if !solid {
-		reject_initial_rar3_ppmd(input, target.packed.clone())?;
-		let mut decoder = compcol::rar3::Decoder::with_unpack_size(target.size);
-		let output = decode_one(&mut decoder, input, target.packed.clone(), target.size)?;
-		verify_crc(&output, target.crc32)?;
-		return Ok(output);
-	}
+	reject_initial_rar3_ppmd(input, target.packed.clone())?;
+	let mut decoder = compcol::rar3::Decoder::with_unpack_size(target.size);
+	let output = decode_one(&mut decoder, input, target.packed.clone(), target.size)?;
+	verify_crc(&output, target.crc32)?;
+	Ok(output)
+}
 
-	let group_start = if archive.main_solid {
-		0
-	} else {
-		let mut start = index;
-		while start > 0 && archive.files[start].solid {
-			start -= 1;
-		}
-		start
-	};
-	let first_size = archive.files[group_start].size;
-	let mut decoder = compcol::rar3::Decoder::with_unpack_size(first_size).with_solid();
-	let mut selected = None;
-	for member_index in group_start..=index {
-		if member_index != group_start {
+/// Decodes a RAR4 solid group with one decoder, member by member.
+fn extract_rar4_solid(
+	input: &[u8],
+	archive: &Archive,
+	start: usize,
+	last: usize,
+	visit: &mut dyn FnMut(usize, &[u8]),
+) -> Result<(), Error> {
+	let first = &archive.files[start];
+	reject_initial_rar3_ppmd(input, first.packed.clone())?;
+	let mut decoder = compcol::rar3::Decoder::with_unpack_size(first.size).with_solid();
+	for file in &archive.files[start..=last] {
+		if file.index != start {
 			decoder
-				.begin_solid_member(archive.files[member_index].size)
+				.begin_solid_member(file.size)
 				.map_err(Error::Decoder)?;
-		}
-		let file = &archive.files[member_index];
-		if member_index == group_start {
-			reject_initial_rar3_ppmd(input, file.packed.clone())?;
 		}
 		let output = decode_one(&mut decoder, input, file.packed.clone(), file.size)?;
 		verify_crc(&output, file.crc32)?;
-		if member_index == index {
-			selected = Some(output);
-		}
+		visit(file.index, &output);
 	}
-	selected.ok_or(Error::InvalidArchive("RAR4 solid target is missing"))
+	Ok(())
 }
 
-fn extract_rar5(input: &[u8], archive: &Archive, index: usize) -> Result<Vec<u8>, Error> {
-	let target = &archive.files[index];
+/// Extracts a stored or independently compressed RAR5 member.
+fn extract_rar5(input: &[u8], target: &FileEntry) -> Result<Vec<u8>, Error> {
 	if target.method == 0 {
 		let output = input[target.packed.clone()].to_vec();
 		verify_optional_crc(&output, target.crc32)?;
 		return Ok(output);
 	}
-	if !target.solid {
-		let window = target.dictionary;
-		let mut decoder = compcol::rar5::Decoder::with_unpack_size_and_window(target.size, window);
-		let output = decode_one(&mut decoder, input, target.packed.clone(), target.size)?;
-		verify_optional_crc(&output, target.crc32)?;
-		return Ok(output);
-	}
+	let window = target.dictionary;
+	let mut decoder = compcol::rar5::Decoder::with_unpack_size_and_window(target.size, window);
+	let output = decode_one(&mut decoder, input, target.packed.clone(), target.size)?;
+	verify_optional_crc(&output, target.crc32)?;
+	Ok(output)
+}
 
-	let mut group_start = index;
-	while group_start > 0 && archive.files[group_start].solid {
-		group_start -= 1;
-	}
-	let group = &archive.files[group_start..=index];
+/// Decodes a RAR5 solid group as one stream with file boundaries.
+fn extract_rar5_solid(
+	input: &[u8],
+	archive: &Archive,
+	start: usize,
+	last: usize,
+	visit: &mut dyn FnMut(usize, &[u8]),
+) -> Result<(), Error> {
+	let group = &archive.files[start..=last];
 	if group.iter().any(|file| file.method == 0 || file.directory) {
 		return Err(Error::Unsupported(
 			"mixed stored and compressed RAR5 solid group",
@@ -902,12 +961,10 @@ fn extract_rar5(input: &[u8], archive: &Archive, index: usize) -> Result<Vec<u8>
 			)
 			.ok_or(Error::LimitExceeded("solid output offset overflows"))?;
 		verify_optional_crc(&output[offset..end], file.crc32)?;
-		if file.index == index {
-			return Ok(output[offset..end].to_vec());
-		}
+		visit(file.index, &output[offset..end]);
 		offset = end;
 	}
-	Err(Error::InvalidArchive("RAR5 solid target is missing"))
+	Ok(())
 }
 
 fn reject_initial_rar3_ppmd(input: &[u8], range: core::ops::Range<usize>) -> Result<(), Error> {
@@ -978,10 +1035,10 @@ fn verify_crc(data: &[u8], expected: Option<u32>) -> Result<(), Error> {
 }
 
 fn verify_optional_crc(data: &[u8], expected: Option<u32>) -> Result<(), Error> {
-	if let Some(expected) = expected {
-		if crc32(data) != expected {
-			return Err(Error::ChecksumMismatch("member output CRC32"));
-		}
+	if let Some(expected) = expected
+		&& crc32(data) != expected
+	{
+		return Err(Error::ChecksumMismatch("member output CRC32"));
 	}
 	Ok(())
 }
@@ -1120,10 +1177,10 @@ mod tests {
 
 	fn fixture(name: &str) -> &'static [u8] {
 		match name {
-			"rar40-normal" => include_bytes!("../../cbr-wasm/fixtures/rar40-normal.cbr"),
-			"rar40-solid" => include_bytes!("../../cbr-wasm/fixtures/rar40-solid.cbr"),
-			"rar50-normal" => include_bytes!("../../cbr-wasm/fixtures/rar50-normal.cbr"),
-			"rar50-solid" => include_bytes!("../../cbr-wasm/fixtures/rar50-solid.cbr"),
+			"rar40-normal" => include_bytes!("../fixtures/rar40-normal.cbr"),
+			"rar40-solid" => include_bytes!("../fixtures/rar40-solid.cbr"),
+			"rar50-normal" => include_bytes!("../fixtures/rar50-normal.cbr"),
+			"rar50-solid" => include_bytes!("../fixtures/rar50-solid.cbr"),
 			_ => panic!("unknown fixture {name}"),
 		}
 	}
@@ -1149,9 +1206,9 @@ mod tests {
 	#[test]
 	fn extracts_all_real_fixture_pages_exactly() {
 		let expected = [
-			include_bytes!("../../cbr-wasm/fixtures/page10.png").as_slice(),
-			include_bytes!("../../cbr-wasm/fixtures/page2.png").as_slice(),
-			include_bytes!("../../cbr-wasm/fixtures/page1.png").as_slice(),
+			include_bytes!("../fixtures/page10.png").as_slice(),
+			include_bytes!("../fixtures/page2.png").as_slice(),
+			include_bytes!("../fixtures/page1.png").as_slice(),
 		];
 		for name in ["rar40-normal", "rar40-solid", "rar50-normal", "rar50-solid"] {
 			for (index, expected) in expected.iter().enumerate() {
@@ -1241,10 +1298,30 @@ mod tests {
 	}
 
 	#[test]
+	fn for_each_member_matches_extract_member() {
+		for archive_name in ["rar40-normal", "rar40-solid", "rar50-normal", "rar50-solid"] {
+			let input = fixture(archive_name);
+			let mut visited = Vec::new();
+			for_each_member(input, |index, output| {
+				visited.push((index, output.to_vec()))
+			})
+			.unwrap();
+			assert_eq!(visited.len(), 3, "{archive_name}");
+			for (index, output) in visited {
+				assert_eq!(
+					output,
+					extract_member(input, index).unwrap(),
+					"{archive_name}"
+				);
+			}
+		}
+	}
+
+	#[test]
 	#[ignore = "large fixtures are generated artifacts"]
 	fn extracts_large_fixtures() {
-		let base =
-			std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../cbr-wasm/artifacts/large");
+		let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+			.join("../../experiments/cbr-wasm/artifacts/large");
 		assert!(
 			base.join("rar40-normal.cbr").is_file(),
 			"generate large fixtures first; see README.md"
