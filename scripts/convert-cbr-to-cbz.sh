@@ -92,6 +92,8 @@ while IFS= read -r -d '' file; do
 		continue
 	fi
 
+	# One extraction directory per archive, removed before the next one. The
+	# trap only covers an interrupted run.
 	tmp="$(mktemp -d)"
 	trap 'rm -rf "$tmp"' EXIT
 
@@ -117,6 +119,7 @@ while IFS= read -r -d '' file; do
 		rm -f "$out_abs"
 		failed=$((failed + 1))
 	fi
+	rm -rf "$tmp"
 done < <(find "$directory" -type f -iname '*.cbr' -print0)
 
 echo "found=$found converted=$converted failed=$failed"
