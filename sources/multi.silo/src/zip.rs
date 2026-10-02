@@ -147,7 +147,7 @@ fn decompress(slice: &[u8], method: u16, uncomp_size: u64) -> Result<Vec<u8>> {
 				.map_err(|e| error!("Failed to decompress a page: {e:?}"))
 		}
 		other => {
-			bail!("Unsupported ZIP compression method {other}; only CBZ archives are supported.")
+			bail!("Unsupported ZIP compression method {other}; only CBZ archives are supported.");
 		}
 	}
 }

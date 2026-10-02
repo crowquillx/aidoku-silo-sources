@@ -59,7 +59,9 @@ fn plugin_base(base: &str, installation: &str, api_version: &str) -> Result<Stri
 		"v2" => Ok(format!(
 			"{base}/api/v2/plugin-content/plugins/{installation}/v1"
 		)),
-		_ => bail!("Invalid Comic Pages API version."),
+		_ => {
+			bail!("Invalid Comic Pages API version.");
+		}
 	}
 }
 
@@ -96,7 +98,9 @@ pub fn installation(client: &mut Client) -> Option<String> {
 	}
 	client
 		.plugin_installation(PLUGIN_ID)
-		.inspect_err(|e| println!("[silo] Comic Pages detection failed: {e:?}"))
+		.inspect_err(|e| {
+			println!("[silo] Comic Pages detection failed: {e:?}");
+		})
 		.ok()
 		.flatten()
 }
