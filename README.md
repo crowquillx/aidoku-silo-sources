@@ -46,6 +46,13 @@ The source caches its session, profile and detected API version, so most calls
 make no extra authentication requests. Changing the server, account, API key,
 profile or PIN discards the cached session.
 
+### Multiple servers
+
+The repository also publishes **Silo 2** and **Silo 3**. They are the same
+source under separate IDs. Aidoku stores settings for each one separately, so
+install one copy for each server or account and configure each on its own.
+Manga in your library belong to the copy you added them from.
+
 ### API versions
 
 Both Silo APIs are supported:

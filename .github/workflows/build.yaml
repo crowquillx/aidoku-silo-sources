@@ -7,12 +7,14 @@ on:
     paths:
       - "sources/**"
       - "crates/**"
+      - "scripts/package-instances.sh"
       - ".github/actions/install-aidoku-cli/**"
       - ".github/workflows/build.yaml"
   pull_request:
     paths:
       - "sources/**"
       - "crates/**"
+      - "scripts/package-instances.sh"
       - ".github/actions/install-aidoku-cli/**"
       - ".github/workflows/build.yaml"
   workflow_dispatch:
@@ -85,13 +87,18 @@ jobs:
               cd "$source"
               aidoku package
               aidoku verify package.aix
+              # Extra copies with their own settings, for more servers.
+              ../../scripts/package-instances.sh package.aix 3
+              for instance in package-[0-9]*.aix; do
+                aidoku verify "$instance"
+              done
             )
             echo "::endgroup::"
           done
 
       - name: Build source list
         run: |
-          aidoku build sources/*/package.aix --name "Silo Sources"
+          aidoku build sources/*/package.aix sources/*/package-[0-9]*.aix --name "Silo Sources"
 
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4.7.2
