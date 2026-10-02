@@ -68,6 +68,16 @@ pub struct LoginResponse {
 	pub access_token: String,
 	pub refresh_token: Option<String>,
 	pub expires_in: Option<i64>,
+	/// v2 only; absent on refresh responses.
+	pub user: Option<LoginUser>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub struct LoginUser {
+	/// A temporary password: until it is changed, the session may only change
+	/// the password, and every other request answers `403`.
+	pub password_change_required: bool,
 }
 
 #[derive(Deserialize, Default)]

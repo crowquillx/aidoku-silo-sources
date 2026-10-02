@@ -1486,6 +1486,24 @@ mod test {
 
 	#[aidoku_test]
 	#[ignore]
+	fn test_mock_temporary_password_is_reported() {
+		configure_v2_mock();
+		let error = Silo::new()
+			.handle_basic_login(
+				String::from("credentials"),
+				String::from("temp"),
+				String::from("temp"),
+			)
+			.err()
+			.unwrap();
+		assert!(matches!(
+			error,
+			aidoku::AidokuError::Message(message) if message.contains("new password")
+		));
+	}
+
+	#[aidoku_test]
+	#[ignore]
 	fn test_mock_pin_profile() {
 		configure_v2_mock();
 		defaults_set("profile", DefaultValue::String(String::from("Locked")));

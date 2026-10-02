@@ -322,14 +322,22 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get('Content-Length', 0))
         if path == "/api/v2/auth/login":
             body = json.loads(self.rfile.read(length))
-            if (body.get("username"), body.get("password")) != ("mock", "mock"):
+            credentials = (body.get("username"), body.get("password"))
+            if credentials not in (("mock", "mock"), ("temp", "temp")):
                 return self._problem(401, "invalid_credentials")
+            # "temp" holds a temporary password and gets a restricted session.
             return self._json(
                 {
                     "access_token": "acc",
                     "refresh_token": "ref",
                     "expires_in": 3600,
-                    "user": {"id": "1", "username": "mock", "role": "user", "permissions": []},
+                    "user": {
+                        "id": "1",
+                        "username": credentials[0],
+                        "role": "user",
+                        "permissions": [],
+                        "password_change_required": credentials[0] == "temp",
+                    },
                 }
             )
         if path == "/api/v2/auth/refresh":

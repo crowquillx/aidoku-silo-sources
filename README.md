@@ -40,7 +40,9 @@ Open the source settings in Aidoku:
 | **Comic Pages plugin installation ID** | Optional. Needed only on v1 servers, where the plugin can't be detected. |
 
 API keys never expire and skip profile PIN prompts, so they are the most
-low-maintenance way to connect a reader.
+low-maintenance way to connect a reader. Only a Silo admin can create one: an
+admin creates keys for their own account, or for another account by choosing
+that account as the owner.
 
 The source caches its session, profile and detected API version, so most calls
 make no extra authentication requests. Changing the server, account, API key,

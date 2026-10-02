@@ -265,10 +265,21 @@ impl Client {
 		let response = self.public_post("/auth/login", &body)?;
 		match response.status_code() {
 			401 | 403 => Ok(None),
-			200..=299 => response
-				.get_json_owned()
-				.map(Some)
-				.map_err(|e| error!("Unexpected login response: {e:?}")),
+			200..=299 => {
+				let tokens: LoginResponse = response
+					.get_json_owned()
+					.map_err(|e| error!("Unexpected login response: {e:?}"))?;
+				if tokens
+					.user
+					.as_ref()
+					.is_some_and(|user| user.password_change_required)
+				{
+					bail!(
+						"Silo requires a new password for this account. Sign in to Silo on the web, choose a new password, then log in here with it."
+					);
+				}
+				Ok(Some(tokens))
+			}
 			status => Err(status_error("Silo login failed", status, &response)),
 		}
 	}
