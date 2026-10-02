@@ -1,0 +1,53 @@
+{
+  "name": "Silo Sources",
+  "sources": [
+    {
+      "id": "multi.silo",
+      "name": "Silo",
+      "version": 12,
+      "iconURL": "icons/multi.silo-v12.png",
+      "downloadURL": "sources/multi.silo-v12.aix",
+      "languages": [
+        "multi"
+      ],
+      "contentRating": 1,
+      "altNames": [
+        "Silo Server"
+      ],
+      "baseURL": "https://siloserver.org",
+      "minAppVersion": "0.7.0"
+    },
+    {
+      "id": "multi.silo2",
+      "name": "Silo 2",
+      "version": 12,
+      "iconURL": "icons/multi.silo2-v12.png",
+      "downloadURL": "sources/multi.silo2-v12.aix",
+      "languages": [
+        "multi"
+      ],
+      "contentRating": 1,
+      "altNames": [
+        "Silo Server"
+      ],
+      "baseURL": "https://siloserver.org",
+      "minAppVersion": "0.7.0"
+    },
+    {
+      "id": "multi.silo3",
+      "name": "Silo 3",
+      "version": 12,
+      "iconURL": "icons/multi.silo3-v12.png",
+      "downloadURL": "sources/multi.silo3-v12.aix",
+      "languages": [
+        "multi"
+      ],
+      "contentRating": 1,
+      "altNames": [
+        "Silo Server"
+      ],
+      "baseURL": "https://siloserver.org",
+      "minAppVersion": "0.7.0"
+    }
+  ]
+}
