@@ -1,7 +1,7 @@
 # Silo source v5: optional Comic Pages plugin
 
 Validated on 2026-09-13. Source v5 adds an optional integration with the separate
-[Comic Pages plugin](https://github.com/crowquillx/silo-comic-pages). Installable
+Comic Pages plugin (no longer published). Installable
 plugin releases are published for Linux amd64 and arm64; no live Silo server was
 modified or received the plugin during this work.
 
@@ -18,9 +18,8 @@ access before serving each chunk. Tokens are in authenticated POST bodies and
 headers, not page URLs or contexts. The source joins 1 MiB chunks into a page
 bounded at 32 MiB. Cache revisions and profile IDs distinguish page URLs.
 
-See the plugin's [protocol](https://github.com/crowquillx/silo-comic-pages/blob/main/docs/protocol.md)
-and [validation report](https://github.com/crowquillx/silo-comic-pages/blob/main/docs/validation.md)
-for exact dependency versions, licenses, executable sizes, resource limits,
+The plugin's protocol and validation report (kept in its repository, which is no
+longer public) record exact dependency versions, licenses, executable sizes, resource limits,
 fixture provenance, and measured extraction costs. The design follows the server
 page APIs found in [the comparison with other sources](cbr-other-sources.md).
 
@@ -65,6 +64,6 @@ the deployed hashes and index are retained in
 [verification log](evidence/cbr-v5/package-verification.log).
 
 Aidoku's image request bridge preserves POST method and body according to the
-pinned Swift code linked in the plugin protocol. No physical iOS device test or
+pinned Swift code cited in the plugin protocol. No physical iOS device test or
 live plugin installation was performed. These remain deployment validation
 steps for an administrator choosing to install the release.

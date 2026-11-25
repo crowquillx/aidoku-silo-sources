@@ -1,7 +1,7 @@
 # CBR/RAR page handling in other sources
 
 Update, 2026-09-13: the server extraction approach below is now implemented in
-the separate [Comic Pages plugin](https://github.com/crowquillx/silo-comic-pages).
+the separate Comic Pages plugin, which is no longer published.
 Source v5 adds its optional integration; see [v5 validation](cbr-v5-release.md).
 The comparison below records the earlier v4 investigation.
 

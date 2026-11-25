@@ -36,7 +36,7 @@ Open the source settings in Aidoku:
 | **Profile** | Optional profile name or ID. Blank uses the primary profile. |
 | **Profile PIN** | Required only for PIN-protected profiles. |
 | **Mark chapters read on Silo** | Marks a chapter read on Silo when it is opened or downloaded in Aidoku. |
-| **Use Comic Pages plugin** | Extracts CBR pages on your server with the [Comic Pages plugin](https://github.com/crowquillx/silo-comic-pages) when it is installed. On by default. |
+| **Use Comic Pages plugin** | Extracts CBR pages on your server with the Comic Pages plugin when it is installed. On by default. |
 | **Comic Pages plugin installation ID** | Optional. Needed only on v1 servers, where the plugin can't be detected. |
 
 API keys never expire and skip profile PIN prompts, so they are the most
@@ -71,9 +71,9 @@ back to the other version when one answers `404` or `410 Gone`.
 
 ### Server extraction for CBR
 
-The source can use the separately installed
-[Comic Pages plugin](https://github.com/crowquillx/silo-comic-pages) (v0.2.0 or
-newer). Install and configure the plugin in Silo. On v2 servers the source finds
+The source can use the Comic Pages plugin (v0.2.0 or newer) when it is already
+installed on your server. The plugin is no longer published, so new servers
+use the built-in CBR decoder instead. On v2 servers the source finds
 it through Silo's user plugin list, so there is nothing to enter; older plugin
 versions or v1 servers need the installation ID in the source's Reading
 settings. CBR chapters then use server extraction and the source downloads
